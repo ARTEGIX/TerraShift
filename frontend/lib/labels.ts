@@ -90,5 +90,8 @@ export const mm = (n: number) => `${Math.round(n).toLocaleString("en-US")} mm`;
 export const kg = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(Math.round(n))} kg/ha`;
 export const pct = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(2)}%`;
 
+/** "paddy_rice" → "Paddy rice", used when the crop list hasn't loaded. */
+export const prettyId = (id: string) => id.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+
 /** Short crop name for tight spaces: "Sunn Hemp (cover crop)" → "Sunn Hemp". */
 export const shortCrop = (name: string) => name.replace(/\s*\(.*\)\s*$/, "");

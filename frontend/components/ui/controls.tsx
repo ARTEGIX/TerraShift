@@ -113,7 +113,7 @@ export function Notice({
   icon,
   children,
 }: {
-  tone?: "info" | "warn" | "error" | "sample";
+  tone?: "info" | "warn" | "error";
   icon?: ReactNode;
   children: ReactNode;
 }) {
@@ -121,7 +121,6 @@ export function Notice({
     info: "bg-sky-50 text-sky-900 ring-sky-200",
     warn: "bg-amber-50 text-amber-900 ring-amber-200",
     error: "bg-red-50 text-red-800 ring-red-200",
-    sample: "bg-violet-50 text-violet-900 ring-violet-200",
   };
   return (
     <div role={tone === "error" ? "alert" : undefined} className={`flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm ring-1 ${tones[tone]}`}>

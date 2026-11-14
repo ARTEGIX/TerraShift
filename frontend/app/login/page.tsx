@@ -1,7 +1,6 @@
 "use client";
 
 import { Sprout } from "lucide-react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Notice, Spinner } from "@/components/ui/controls";
@@ -112,12 +111,6 @@ function LoginForm() {
           {mode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
         </button>
       </div>
-      <p className="mt-4 text-center text-sm text-slate-500">
-        Just looking?{" "}
-        <Link href="/results/demo" className="font-medium text-leaf-700 hover:underline">
-          See a sample report
-        </Link>
-      </p>
     </div>
   );
 }

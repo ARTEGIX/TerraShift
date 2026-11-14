@@ -134,7 +134,7 @@ export interface PredictResponse {
     lon: number;
     cached: boolean;
     months_count?: number;
-    /** 36 months of NASA POWER + SMAP + NDVI (contract v0.2.0); the demo may omit it. */
+    /** 36 months of NASA POWER + SMAP + NDVI (contract v0.2.0). */
     monthly?: ClimateMonth[];
   };
   risk: RiskReport;

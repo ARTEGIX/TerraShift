@@ -2,10 +2,8 @@
  * Typed client for main-service (`/api/*`). Mirrors docs/api-contract.md (v0.2.0).
  *
  * v0.2.0: farms and simulation runs no longer need a login; the auth routes still exist.
- * Only the sample report (`/results/demo`) uses mock data. Real pages never fall
- * back to the mock silently, so a farmer can't mistake the sample for their own field.
+ * There is no mock data: every screen shows what the live backend returns.
  */
-import { MOCK_ANALYSIS, MOCK_CROPS } from "./mock";
 import type {
   AnalysisRecord,
   AnalysisSummary,
@@ -18,7 +16,11 @@ import type {
   UserProfile,
 } from "./types";
 
-export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost/api").replace(/\/$/, "");
+/**
+ * Set NEXT_PUBLIC_API_BASE_URL in Vercel (and in .env.local for local dev).
+ * Falls back to the team's deployed gateway so a missing setting never points the live site at localhost.
+ */
+export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://168.144.100.73.sslip.io/api").replace(/\/$/, "");
 const TOKEN_KEY = "terrashift_token";
 const USER_KEY = "terrashift_user";
 const AUTH_EVENT = "terrashift-auth";
@@ -152,15 +154,18 @@ export async function logout(): Promise<void> {
 
 /* ------------------------------------------------------------------ reference data */
 
-/** Crop list from the Lookup table. Falls back to the bundled copy of the same table offline. */
-export async function fetchCrops(): Promise<CropInfo[]> {
-  try {
-    const { crops } = await request<{ crops: CropInfo[] }>("/crops", {}, 8_000);
+let cropsCache: Promise<CropInfo[]> | null = null;
+
+/** Crop list from lookup_db (via main-service). Cached for the page session; throws if it can't load. */
+export function fetchCrops(): Promise<CropInfo[]> {
+  cropsCache ??= request<{ crops: CropInfo[] }>("/crops", {}, 15_000)
     // lookup_db documents use `_id`; normalise to `id` (same as the team's fix on main).
-    return crops.length ? crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })) : MOCK_CROPS;
-  } catch {
-    return MOCK_CROPS;
-  }
+    .then(({ crops }) => crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })))
+    .catch((err) => {
+      cropsCache = null; // allow a retry
+      throw err;
+    });
+  return cropsCache;
 }
 
 /* ------------------------------------------------------------------ farms */
@@ -229,7 +234,6 @@ export async function listAnalyses(farmId?: string): Promise<AnalysisSummary[]> 
   return body.simulation_runs ?? body.analyses ?? [];
 }
 
-export async function fetchAnalysis(id: string): Promise<AnalysisRecord & { isSample?: boolean }> {
-  if (id === "demo") return { ...MOCK_ANALYSIS, isSample: true };
+export async function fetchAnalysis(id: string): Promise<AnalysisRecord> {
   return request<AnalysisRecord>(`/simulation-runs/${encodeURIComponent(id)}`);
 }

@@ -12,7 +12,6 @@ import { analyseFarm, createFarm, fetchCrops } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
-import { MOCK_CROPS } from "@/lib/mock";
 import type { CropInfo, Priority } from "@/lib/types";
 
 const STEPS = [
@@ -42,15 +41,20 @@ function errorsFor(d: FieldDraft, step: number): Errors {
 export default function FarmWizardPage() {
   const router = useRouter();
   const [draft, update, loaded] = useDraft();
-  const [crops, setCrops] = useState<CropInfo[]>(MOCK_CROPS);
+  const [crops, setCrops] = useState<CropInfo[]>([]);
+  const [cropsError, setCropsError] = useState<string | null>(null);
   const [tried, setTried] = useState<Record<number, boolean>>({});
   const [drawSignal, setDrawSignal] = useState(0);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCrops().then(setCrops);
-  }, []);
+  function loadCrops() {
+    setCropsError(null);
+    fetchCrops()
+      .then(setCrops)
+      .catch((err: Error) => setCropsError(err.message));
+  }
+  useEffect(loadCrops, []);
 
   const step = draft.step;
   const errors = tried[step] ? errorsFor(draft, step) : {};
@@ -211,6 +215,19 @@ export default function FarmWizardPage() {
         {step === 1 && (
           <div className="space-y-8">
             <Question label="Which crop is in the field now?" error={errors.crop}>
+              {cropsError && (
+                <Notice tone="error">
+                  <p>Couldn&apos;t load the crop list. {cropsError}</p>
+                  <button type="button" onClick={loadCrops} className="btn-plain mt-1 text-[15px]">
+                    Try again
+                  </button>
+                </Notice>
+              )}
+              {!cropsError && crops.length === 0 && (
+                <p className="flex items-center gap-2 text-[15px] text-ink-3">
+                  <Spinner className="size-4" /> Loading crops…
+                </p>
+              )}
               <div role="radiogroup" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {crops.map((c) => {
                   const on = draft.currentCrop === c.id;

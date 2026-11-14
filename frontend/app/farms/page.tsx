@@ -8,8 +8,7 @@ import { Notice } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
 import { ApiError, analyseFarm, deleteFarm, fetchCrops, listAnalyses, listFarms } from "@/lib/api";
 import { haToAcres } from "@/lib/geo";
-import { priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
-import { MOCK_CROPS } from "@/lib/mock";
+import { prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisSummary, type CropInfo, type Farm } from "@/lib/types";
 
 const dateFmt = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -18,12 +17,12 @@ export default function FarmsPage() {
   const router = useRouter();
   const [farms, setFarms] = useState<Farm[] | null>(null);
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([]);
-  const [crops, setCrops] = useState<CropInfo[]>(MOCK_CROPS);
+  const [crops, setCrops] = useState<CropInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchCrops().then(setCrops);
+    fetchCrops().then(setCrops).catch(() => setCrops([]));
     Promise.all([listFarms(), listAnalyses()])
       .then(([f, a]) => {
         setFarms(f);
@@ -35,7 +34,7 @@ export default function FarmsPage() {
       });
   }, [router]);
 
-  const cropName = (id: string) => shortCrop(crops.find((c) => c.id === id)?.name ?? id);
+  const cropName = (id: string) => shortCrop(crops.find((c) => c.id === id)?.name ?? prettyId(id));
 
   async function rerun(farm: Farm) {
     setBusy(farm._id);

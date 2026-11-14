@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, FlaskConical, Layers, Printer, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, Layers, Printer, Sparkles, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,11 +11,9 @@ import PlanCharts from "@/components/strategy/PlanCharts";
 import StrategyCard, { CropSequence, PLAN_COLOR, PLAN_SHORT, SignalList, signalsFor } from "@/components/strategy/StrategyCard";
 import { PageLoader } from "@/components/ui/Loaders";
 import { ApiError, fetchAnalysis, fetchCrops } from "@/lib/api";
-import { MONTHS_LONG, cleanText, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
-import { MOCK_CROPS } from "@/lib/mock";
+import { MONTHS_LONG, cleanText, prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisRecord, type CropInfo, type Priority, type SoilType, type StrategyId } from "@/lib/types";
 
-type Loaded = AnalysisRecord & { isSample?: boolean };
 type Tab = "plans" | "calendar" | "weather";
 
 const TABS: { id: Tab; label: string; icon: typeof Layers }[] = [
@@ -27,17 +25,17 @@ const TABS: { id: Tab; label: string; icon: typeof Layers }[] = [
 export default function ResultsPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const id = params?.id ?? "demo";
-  const [record, setRecord] = useState<Loaded | null>(null);
+  const id = params?.id ?? "";
+  const [record, setRecord] = useState<AnalysisRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [crops, setCrops] = useState<CropInfo[]>(MOCK_CROPS);
+  const [crops, setCrops] = useState<CropInfo[]>([]);
   const [selected, setSelected] = useState<StrategyId | null>(null);
   const [tab, setTab] = useState<Tab>("plans");
 
   useEffect(() => {
     setRecord(null);
     setError(null);
-    fetchCrops().then(setCrops);
+    fetchCrops().then(setCrops).catch(() => setCrops([]));
     fetchAnalysis(id)
       .then((r) => {
         setRecord(r);
@@ -59,8 +57,8 @@ export default function ResultsPage() {
           <Link href="/farms" className="btn-primary">
             Go to my fields
           </Link>
-          <Link href="/results/demo" className="btn-secondary">
-            See a sample report
+          <Link href="/farm" className="btn-secondary">
+            Plan a field
           </Link>
         </div>
       </div>
@@ -89,7 +87,7 @@ export default function ResultsPage() {
   const current = p.strategies.find((s) => s.id === selected) ?? best;
   const notes = Object.fromEntries(ex.per_strategy.map((n) => [n.id, n]));
   const inputs = p.inputs as { current_crop?: string; soil_type?: SoilType; priority?: Priority; planting_month?: number };
-  const cropNow = shortCrop(crops.find((c) => c.id === inputs.current_crop)?.name ?? inputs.current_crop ?? "");
+  const cropNow = inputs.current_crop ? shortCrop(crops.find((c) => c.id === inputs.current_crop)?.name ?? prettyId(inputs.current_crop)) : "";
 
   function go(t: Tab, plan?: StrategyId) {
     if (plan) setSelected(plan);
@@ -101,8 +99,8 @@ export default function ResultsPage() {
     <div className="mx-auto max-w-2xl px-4 pb-20 pt-4 sm:px-6">
       {/* Top actions */}
       <nav className="no-print flex items-center justify-between">
-        <Link href={record.isSample ? "/" : "/farms"} className="btn-plain -ml-1 text-[15px]">
-          <ArrowLeft className="size-5" aria-hidden /> {record.isSample ? "Home" : "My fields"}
+        <Link href="/farms" className="btn-plain -ml-1 text-[15px]">
+          <ArrowLeft className="size-5" aria-hidden /> My fields
         </Link>
         <button type="button" onClick={() => window.print()} aria-label="Print this plan" className="grid size-11 place-items-center rounded-full text-ink-2 hover:bg-black/[0.05]">
           <Printer className="size-5" aria-hidden />
@@ -124,18 +122,7 @@ export default function ResultsPage() {
         </p>
       </header>
 
-      {record.isSample && (
-        <p className="mt-4 flex items-start gap-2.5 rounded-2xl bg-violet-50 px-4 py-3 text-[15px] text-violet-900">
-          <FlaskConical className="mt-0.5 size-5 shrink-0" aria-hidden />
-          <span>
-            <strong>Sample report</strong> with made-up numbers.{" "}
-            <Link href="/farm" className="font-semibold underline">
-              Plan your own field
-            </Link>
-          </span>
-        </p>
-      )}
-      {p.climate.source === "fallback" && !record.isSample && (
+      {p.climate.source === "fallback" && (
         <p className="mt-4 flex items-start gap-2.5 rounded-2xl bg-amber-50 px-4 py-3 text-[15px] text-amber-900">
           <TriangleAlert className="mt-0.5 size-5 shrink-0" aria-hidden />
           NASA data couldn&apos;t be reached, so this uses modelled weather. Try again later for real data.

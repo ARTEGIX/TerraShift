@@ -18,9 +18,6 @@ export default function HomePage() {
           <Link href="/farm" className="btn-primary min-h-14 text-[19px]">
             Plan my field <ArrowRight className="size-5" aria-hidden />
           </Link>
-          <Link href="/results/demo" className="btn-plain justify-center py-2">
-            See a sample plan
-          </Link>
         </div>
       </section>
 
