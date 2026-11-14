@@ -1,0 +1,244 @@
+"""Layer 1: In-Memory Regression Engine (`layer1_regression.py`).
+
+Runs fast Ridge / polynomial regression (`scikit-learn` + `numpy.polyfit`) on the fused
+36-month NumPy array (`FusedClimateCube.matrix`) in RAM to project:
+  1. Next 3 seasons' available water budget (`season_water_budgets_mm`)
+  2. October root-zone soil moisture anomaly (`october_moisture_anomaly_pct`)
+  3. Bare-field erosion risk (`bare_field_erosion_risk` + monthly windows)
+  4. Regional neighbor-farm oversupply penalties & monoculture pest risk
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+from sklearn.linear_model import Ridge
+
+from app.memory_store import InMemoryLookupStore, lookup_store
+from app.nasa_fusion import (
+    COL_ET,
+    COL_NDVI,
+    COL_PRECIP,
+    COL_SMAP_MOISTURE,
+    COL_T2M_MAX,
+    FusedClimateCube,
+)
+
+
+@dataclass
+class Layer1RegressionOutput:
+    """In-memory regression output consumed by Layer 2's vectorized Genetic Algorithm."""
+
+    overall_risk_score: float
+    season_water_budgets_mm: np.ndarray          # shape (3,), float64 — Season 1, 2, 3 available water (mm)
+    season_labels: list[str]                     # ["Season 1 (Maha)", "Season 2 (Yala)", "Season 3 (Maha)"]
+    october_moisture_anomaly_pct: float          # projected Oct root-zone soil moisture anomaly (%)
+    moisture_trend_slope_per_yr: float           # mm/month per year slope from np.polyfit
+    moisture_r2: float
+    heat_stress_score: float
+    peak_t2m_max_c: float
+    months_over_35c: int
+    bare_field_erosion_score: float
+    bare_field_months: list[int]
+    erosion_windows: list[dict[str, Any]]
+    soil_profile: dict[str, Any]
+    region_profile: dict[str, Any]
+    oversupply_penalty_vector: np.ndarray        # shape (N_crops,), float64 penalty (0.0 or 0.22)
+    dominant_pest_family_code: int               # integer family id in `lookup_store.pest_family_vocab`
+
+    def to_summary_dict(self, current_crop_id: str) -> dict[str, Any]:
+        oversupplied = list(self.region_profile.get("oversupplied_crops", []))
+        crop_is_oversupplied = current_crop_id in oversupplied
+        return {
+            "overall_score": round(self.overall_risk_score, 1),
+            "season_water_budgets_mm": [round(float(x), 1) for x in self.season_water_budgets_mm],
+            "october_moisture_anomaly_pct": round(self.october_moisture_anomaly_pct, 2),
+            "soil_moisture_deficit": {
+                "score": round(min(100.0, max(0.0, 50.0 - self.october_moisture_anomaly_pct * 2.2)), 1),
+                "trend": (
+                    "worsening"
+                    if self.moisture_trend_slope_per_yr < -1.5
+                    else "improving"
+                    if self.moisture_trend_slope_per_yr > 1.5
+                    else "stable"
+                ),
+                "october_moisture_anomaly_pct": round(self.october_moisture_anomaly_pct, 2),
+                "slope_mm_per_year": round(self.moisture_trend_slope_per_yr, 2),
+                "r2": round(self.moisture_r2, 3),
+            },
+            "bare_field_erosion": {
+                "score": round(self.bare_field_erosion_score, 1),
+                "soil_k_factor": float(self.soil_profile["erosion_k_factor"]),
+                "bare_field_months": self.bare_field_months,
+                "windows": self.erosion_windows,
+            },
+            "heat_stress": {
+                "score": round(self.heat_stress_score, 1),
+                "peak_t2m_max_c": round(self.peak_t2m_max_c, 2),
+                "months_over_35c": self.months_over_35c,
+            },
+            "regional_saturation": {
+                "region_id": self.region_profile["_id"],
+                "region_name": self.region_profile.get("name", self.region_profile["_id"]),
+                "oversupplied_crops": oversupplied,
+                "dominant_pest_family": self.region_profile.get("dominant_pest_family", "poaceae"),
+                "current_crop_oversupplied": crop_is_oversupplied,
+                "oversupply_penalty_pct": 22.0 if crop_is_oversupplied else 0.0,
+            },
+        }
+
+
+def _seasonal_design_matrix(t_idx: np.ndarray, month_numbers: np.ndarray) -> np.ndarray:
+    """Harmonic + linear time features for fast in-memory Ridge regression."""
+    angle1 = 2.0 * np.pi * month_numbers / 12.0
+    angle2 = 4.0 * np.pi * month_numbers / 12.0
+    return np.column_stack(
+        [
+            t_idx / 36.0,
+            np.sin(angle1),
+            np.cos(angle1),
+            np.sin(angle2),
+            np.cos(angle2),
+        ]
+    )
+
+
+def run_layer1_regression(
+    cube: FusedClimateCube,
+    soil_type: str,
+    current_crop: str,
+    region_id: str | None = None,
+    planting_month: int = 10,
+    store: InMemoryLookupStore = lookup_store,
+) -> Layer1RegressionOutput:
+    """Project 3-season water budgets, Oct soil moisture anomaly, erosion risk & regional penalties."""
+    mat = cube.matrix
+    n = mat.shape[0]
+    t = np.arange(n, dtype=np.float64)
+    months = cube.month_numbers
+
+    soil = store.resolve_soil_profile(soil_type)
+    region = store.resolve_region_profile(region_id, cube.lat)
+
+    precip = mat[:, COL_PRECIP]
+    et = mat[:, COL_ET]
+    t2m = mat[:, COL_T2M_MAX]
+    smap = mat[:, COL_SMAP_MOISTURE]
+    ndvi = mat[:, COL_NDVI]
+    water_balance = precip - 0.65 * et
+
+    # 1. Ridge regression on monthly effective water & temperature to project next 18 months (3 x 6m seasons)
+    X_train = _seasonal_design_matrix(t, months)
+    future_t = np.arange(n, n + 18, dtype=np.float64)
+    future_months = np.array([((planting_month - 1 + k) % 12) + 1 for k in range(18)], dtype=np.int32)
+    X_future = _seasonal_design_matrix(future_t, future_months)
+
+    ridge_precip = Ridge(alpha=1.0).fit(X_train, precip)
+    ridge_et = Ridge(alpha=1.0).fit(X_train, et)
+    ridge_t2m = Ridge(alpha=1.0).fit(X_train, t2m)
+
+    pred_precip = np.clip(ridge_precip.predict(X_future), 5.0, None)
+    pred_et = np.clip(ridge_et.predict(X_future), 20.0, None)
+    pred_t2m = ridge_t2m.predict(X_future)
+
+    pred_wb = ridge_precip.predict(X_train) - 0.65 * ridge_et.predict(X_train)
+    ss_tot = float(np.sum((water_balance - water_balance.mean()) ** 2)) or 1.0
+    r2 = float(np.clip(1.0 - np.sum((water_balance - pred_wb) ** 2) / ss_tot, 0.0, 1.0))
+
+    # Linear trend via numpy.polyfit on water balance (mm/month change per year)
+    slope_per_month, _ = np.polyfit(t, water_balance, 1)
+    moisture_slope_yr = float(slope_per_month * 12.0)
+
+    # Available water budget per 6-month season, scaled by soil water holding capacity & leaching
+    whc_factor = float(soil["water_holding_mm_m"]) / 140.0
+    retention = 1.0 - 0.45 * float(soil["leaching_factor"])
+    season_budgets = np.zeros(3, dtype=np.float64)
+    season_labels: list[str] = []
+
+    for s in range(3):
+        sl = slice(s * 6, (s + 1) * 6)
+        eff_rain = float(np.sum(pred_precip[sl]) * retention)
+        soil_reserve = float(soil["water_holding_mm_m"]) * 0.65
+        evap_loss = float(np.sum(pred_et[sl]) * 0.22)
+        season_budgets[s] = max(140.0, (eff_rain + soil_reserve - evap_loss) * (0.85 + 0.15 * whc_factor))
+        first_m = int(future_months[s * 6])
+        label_name = "Maha" if first_m in (9, 10, 11, 12, 1, 2) else "Yala"
+        season_labels.append(f"Season {s + 1} ({label_name})")
+
+    # 2. October root-zone soil moisture anomaly (%) via np.polyfit over historical Octobers + SMAP series
+    oct_mask = months == 10
+    oct_values = smap[oct_mask] if np.any(oct_mask) else smap[-3:]
+    oct_x = np.arange(oct_values.size, dtype=np.float64)
+    if oct_values.size >= 2:
+        oct_slope, oct_intercept = np.polyfit(oct_x, oct_values, 1)
+        projected_oct = float(oct_slope * oct_values.size + oct_intercept)
+    else:
+        projected_oct = float(oct_values[-1])
+    baseline_oct = float(np.mean(smap))
+    oct_anomaly_pct = float(((projected_oct - baseline_oct) / max(10.0, baseline_oct)) * 100.0)
+
+    # 3. Bare-field erosion risk (precip during bare_field_months × soil erosion_k_factor × low NDVI exposure)
+    bare_months = [int(m) for m in region.get("bare_field_months", [3, 4, 8, 9])]
+    k_factor = float(soil["erosion_k_factor"])
+    erosion_windows: list[dict[str, Any]] = []
+    erosion_scores: list[float] = []
+
+    for i in range(12):
+        m_num = int(future_months[i])
+        rain_m = float(pred_precip[i])
+        is_bare = m_num in bare_months
+        ndvi_hist = float(np.mean(ndvi[months == m_num])) if np.any(months == m_num) else 0.45
+        exposure = (1.25 - ndvi_hist) if is_bare else 0.45
+        index_val = rain_m * k_factor * exposure
+        level = "high" if (is_bare and index_val > 42.0) else "medium" if index_val > 24.0 else "low"
+        erosion_scores.append(min(100.0, index_val * 1.45))
+        erosion_windows.append(
+            {
+                "month_num": m_num,
+                "projected_precip_mm": round(rain_m, 1),
+                "bare_field": is_bare,
+                "risk_level": level,
+            }
+        )
+    bare_erosion_score = float(np.clip(np.mean(erosion_scores), 0.0, 100.0))
+
+    # 4. Heat stress risk from regressed T2M_MAX
+    over_35 = int(np.sum(pred_t2m[:12] > 35.0))
+    peak_tmax = float(np.max(pred_t2m[:12]))
+    heat_score = float(np.clip((peak_tmax - 31.0) * 11.0 + over_35 * 6.5, 0.0, 100.0))
+
+    # 5. Regional neighbor-farm saturation penalties
+    oversupply_mask = store.oversupplied_mask(region["_id"], cube.lat)
+    oversupply_penalty_vector = oversupply_mask * 0.22  # 22% revenue discount when regionally oversupplied
+    dom_family = str(region.get("dominant_pest_family", "poaceae"))
+    dom_family_code = store.pest_family_vocab.get(dom_family, -1)
+
+    moisture_risk = float(np.clip(50.0 - oct_anomaly_pct * 2.2 - moisture_slope_yr * 1.8, 0.0, 100.0))
+    saturation_risk = 75.0 if current_crop in region.get("oversupplied_crops", []) else 35.0
+    overall_score = float(
+        np.clip(
+            0.35 * moisture_risk + 0.25 * bare_erosion_score + 0.20 * heat_score + 0.20 * saturation_risk,
+            0.0,
+            100.0,
+        )
+    )
+
+    return Layer1RegressionOutput(
+        overall_risk_score=overall_score,
+        season_water_budgets_mm=season_budgets,
+        season_labels=season_labels,
+        october_moisture_anomaly_pct=oct_anomaly_pct,
+        moisture_trend_slope_per_yr=moisture_slope_yr,
+        moisture_r2=r2,
+        heat_stress_score=heat_score,
+        peak_t2m_max_c=peak_tmax,
+        months_over_35c=over_35,
+        bare_field_erosion_score=bare_erosion_score,
+        bare_field_months=bare_months,
+        erosion_windows=erosion_windows,
+        soil_profile=soil,
+        region_profile=region,
+        oversupply_penalty_vector=oversupply_penalty_vector,
+        dominant_pest_family_code=dom_family_code,
+    )

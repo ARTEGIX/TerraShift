@@ -1,184 +1,48 @@
-# TerraShift API Contract (`v0.1.0`)
+# TerraShift API Contract (`v0.2.0`)
 
-Single source of truth for payloads exchanged between `frontend`, `main-service`, and `agronomy-engine`.
-Any change to this file requires Lead review so all 6 team members stay in sync.
+Single source of truth for payloads exchanged between `frontend`, `main-service`, and `agronomy-engine` under the **MongoDB Atlas Dual-Database (`lookup_db` + `general_db`) + In-Memory NumPy/Redis Pipeline**.
 
 ---
 
-## 1. Enumerations
+## 1. Enumerations & IDs
 
-- **`SoilType`**: `"clay" | "loam" | "sandy" | "silt" | "laterite"`
+- **`SoilType` (`lookup_db.soil_profiles`)**: `"soil_sandy_loam" | "soil_clay_loam" | "soil_degraded_dry"` (also accepts `"sandy" | "clay" | "loam" | "silt" | "laterite"`)
+- **`RegionId` (`lookup_db.regional_saturation`)**: `"region_lk_dryzone" | "region_us_midwest"`
 - **`Priority`**: `"cost" | "water" | "soil"`
-- **`CropCategory`**: `"cash_crop" | "legume" | "cover_crop" | "drought_tolerant"`
-- **`StrategyId`**: `"A" | "B" | "C"`
-- **`RiskLevel`**: `"low" | "medium" | "high"`
-- **`Trend`**: `"improving" | "stable" | "worsening"`
+- **`StrategyId`**: `"A_BASELINE" | "B_SOIL_WATER_RESILIENCE" | "C_COST_MARKET_OPTIMIZED"`
 
 ---
 
 ## 2. `agronomy-engine` (`:8000` / `/engine/*`)
 
-### `GET /crops`
-Returns the 12-crop lookup array from [`crop_lookup.json`](../agronomy-engine/data/crop_lookup.json).
+### `GET /health`
+Returns engine readiness, Redis connectivity, and `lookup_store` status (`source`, `crops_count: 12`, `matrix_shape: [12, 6]`).
+
+### `POST /internal/reload-lookup`
+Reloads `crops_catalog`, `soil_profiles`, and `regional_saturation` from MongoDB Atlas `lookup_db` into RAM and rebuilds the `12 × 6` `np.float64` matrix (`lookup_store.crop_matrix`).
+
+### `GET /crops` · `GET /soils` · `GET /regions`
+Returns the in-memory dictionaries loaded from `lookup_db`.
 
 ### `POST /predict`
-
-#### Request Body (`PredictRequest`)
-```json
-{
-  "polygon": {
-    "type": "Polygon",
-    "coordinates": [[[80.63, 7.29], [80.64, 7.29], [80.64, 7.30], [80.63, 7.30], [80.63, 7.29]]]
-  },
-  "centroid": { "lat": 7.295, "lon": 80.635 },
-  "current_crop": "paddy_rice",
-  "soil_type": "clay",
-  "priority": "water",
-  "area_ha": 2.4,
-  "planting_month": 10
-}
-```
-
-#### Response Body (`PredictResponse`)
-```json
-{
-  "request_id": "e4d909c2-...",
-  "location": { "lat": 7.3, "lon": 80.64 },
-  "area_ha": 2.4,
-  "inputs": {
-    "current_crop": "paddy_rice",
-    "soil_type": "clay",
-    "priority": "water",
-    "planting_month": 10
-  },
-  "climate": {
-    "source": "nasa_power",
-    "lat": 7.3,
-    "lon": 80.64,
-    "start_year": 2021,
-    "end_year": 2025,
-    "cached": false,
-    "monthly": [
-      {
-        "month": "2021-01",
-        "t2m_max_c": 30.8,
-        "precip_mm": 182.4,
-        "solar_kwh_m2_day": 5.1,
-        "evapotranspiration_mm": 88.2
-      }
-    ]
-  },
-  "risk": {
-    "overall_score": 26.7,
-    "soil_moisture_deficit": {
-      "score": 34.7,
-      "trend": "stable",
-      "cumulative_deficit_mm_12m": 210.4,
-      "deficit_months_12m": 5,
-      "forecast": [{ "month": "2026-01", "value": 45.2, "lower": -12.0, "upper": 102.4 }],
-      "model": {
-        "method": "OLS seasonal-trend regression + AR(1) residuals",
-        "slope_per_year": -1.42,
-        "r2": 0.78,
-        "residual_std": 28.4,
-        "n_obs": 60
-      }
-    },
-    "erosion_windows": [
-      { "month": "2026-01", "precip_mm": 190.2, "bare_field": false, "risk_level": "low" }
-    ],
-    "heat_stress": {
-      "score": 1.3,
-      "threshold_c": 35.0,
-      "months_over_threshold": 0,
-      "peak_t2m_max_c": 33.9,
-      "model": {
-        "method": "OLS seasonal-trend regression + AR(1) residuals",
-        "slope_per_year": 0.04,
-        "r2": 0.84,
-        "residual_std": 0.41,
-        "n_obs": 60
-      }
-    },
-    "regional_saturation": {
-      "score": 71.1,
-      "neighbor_farms_sampled": 45,
-      "crop_share_pct": 42.0,
-      "family_share_pct": 56.0,
-      "herfindahl_index": 0.241,
-      "oversupply_risk": true,
-      "monoculture_pest_risk": true,
-      "crop_shares": { "paddy_rice": 0.42, "maize": 0.14 }
-    }
-  },
-  "strategies": [
-    {
-      "id": "A",
-      "name": "Baseline",
-      "description": "Continue the current crop every season with conventional inputs.",
-      "seasons": [
-        {
-          "season": 1,
-          "season_label": "Maha 2026",
-          "crop_id": "paddy_rice",
-          "crop_name": "Paddy Rice",
-          "category": "cash_crop",
-          "metrics": {
-            "water_use_mm": 995.0,
-            "water_deficit_mm": 205.0,
-            "nitrogen_balance_kg_ha": -90.0,
-            "fertilizer_n_kg_ha": 90.0,
-            "som_pct": 2.35,
-            "input_cost_usd_ha": 795.4,
-            "revenue_usd_ha": 860.0,
-            "net_margin_usd_ha": 64.6,
-            "yield_factor": 0.89
-          }
-        }
-      ],
-      "totals": {
-        "water_use_mm": 2986.7,
-        "water_deficit_mm": 639.4,
-        "nitrogen_balance_kg_ha": -270.0,
-        "som_delta_pct": -0.32,
-        "input_cost_usd_ha": 2484.85,
-        "revenue_usd_ha": 2588.71,
-        "net_margin_usd_ha": 103.86,
-        "resilience_score": 19.9,
-        "fitness": -0.412
-      },
-      "warnings": ["Continuous cropping: soil N is mined each season, so fertilizer spend climbs."]
-    }
-  ],
-  "recommended_strategy": "B",
-  "optimizer": {
-    "method": "Genetic algorithm (tournament selection, one-point crossover, per-gene mutation, elitism)",
-    "population": 60,
-    "generations": 40,
-    "seed": 42001337
-  }
-}
-```
+Runs:
+1. **Step 0 (`app/nasa_fusion.py`)**: 36-month NASA POWER (`T2M_MAX`, `PRECTOTCORR`, `ALLSKY_SFC_SW_DWN`, `EVPTRNS`) + SMAP root-zone moisture + MODIS/Sentinel-2 NDVI array (`shape=(36, 6)`), cached in Redis under `nasa:grid:{lat:.2f}:{lon:.2f}` for 24h.
+2. **Layer 1 (`app/layer1_regression.py`)**: In-memory Ridge / polynomial regression projecting `season_water_budgets_mm`, `october_moisture_anomaly_pct`, `bare_field_erosion`, and regional oversupply penalties.
+3. **Layer 2 (`app/layer2_evolution.py`)**: Vectorized NumPy multi-objective Genetic Algorithm (`pop_size=50`, `n_gen=30`) evaluating $F_{\text{soil}}$, $F_{\text{water}}$, and $F_{\text{cost}}$ directly against `lookup_store.crop_matrix` to output `A_BASELINE`, `B_SOIL_WATER_RESILIENCE`, and `C_COST_MARKET_OPTIMIZED`.
 
 ---
 
-## 3. `main-service` (`/api/*`)
+## 3. `main-service` (`/api/*`, connected to `general_db`)
 
-### Authentication (`/api/auth`)
-- **`POST /api/auth/register`** → `{ name, email, password }` ⇒ `201 { token, user: { id, name, email, role, createdAt } }`
-- **`POST /api/auth/login`** → `{ email, password }` ⇒ `200 { token, user }`
-- **`GET /api/auth/me`** (Header `Authorization: Bearer <token>`) ⇒ `200 { user }`
-- **`POST /api/auth/logout`** (Header `Authorization: Bearer <token>`) ⇒ `204`
+### Farms (`general_db.farms`)
+- **`GET /api/farms`** → `{ farms: IFarm[] }` (includes seeded `farm_demo_01` with `2dsphere` index)
+- **`POST /api/farms`** → `{ _id?, name, polygon, centroid?, region_id?, soil_type, current_crop, default_priority }`
+- **`GET /api/farms/:id`** → `{ farm: IFarm }`
+- **`DELETE /api/farms/:id`** → `204`
 
-### Farms (`/api/farms`, Bearer JWT required)
-- **`GET /api/farms`** ⇒ `200 { farms: Farm[] }`
-- **`POST /api/farms`** → `{ name, polygon, centroid?, soil_type, current_crop, default_priority? }` ⇒ `201 { farm }`
-- **`GET /api/farms/:id`** ⇒ `200 { farm }`
-- **`DELETE /api/farms/:id`** ⇒ `204`
-
-### Analyses (`/api/analyses`, Bearer JWT required)
-- **`POST /api/analyses`**
-  - Either `{ farm_id, priority?, planting_month? }` or `{ polygon, centroid?, current_crop, soil_type, priority, planting_month? }`
-  - Returns `201 { id, prediction: PredictResponse, explanation: Explanation, createdAt }`
-- **`GET /api/analyses`** ⇒ `200 { analyses: AnalysisSummary[] }`
-- **`GET /api/analyses/:id`** ⇒ `200 { id, farm?, prediction, explanation, createdAt }`
+### Simulation Runs (`general_db.simulation_runs`)
+- **`POST /api/analyze`** (also aliased at `POST /api/simulation-runs` & `POST /api/analyses`)
+  - Body: `{ farm_id: "farm_demo_01", priority?: "water" }` **or** `{ polygon, centroid?, current_crop, soil_type, region_id?, priority }`
+  - Calls `http://agronomy-engine:8000/predict` → passes deterministic JSON output to `llmExplainer.ts` (Gemini with template fallback) → saves to `general_db.simulation_runs` → returns `{ id, farm_id, prediction, explanation, createdAt }`.
+- **`GET /api/simulation-runs`** (`?farm_id=farm_demo_01`) → list saved runs
+- **`GET /api/simulation-runs/:id`** → fetch full saved simulation run

@@ -2,9 +2,9 @@
  * Shared frontend TypeScript types mirroring docs/api-contract.md.
  */
 
-export type SoilType = "clay" | "loam" | "sandy" | "silt" | "laterite";
+export type SoilType = "soil_clay_loam" | "soil_sandy_loam" | "soil_degraded_dry";
 export type Priority = "cost" | "water" | "soil";
-export type StrategyId = "A" | "B" | "C";
+export type StrategyId = "A_BASELINE" | "B_SOIL_WATER_RESILIENCE" | "C_COST_MARKET_OPTIMIZED";
 export type RiskLevel = "low" | "medium" | "high";
 
 export interface Polygon {
@@ -19,57 +19,55 @@ export interface Centroid {
 
 export interface CropInfo {
   id: string;
+  _id?: string;
   name: string;
   category: "cash_crop" | "legume" | "cover_crop" | "drought_tolerant";
-  family: string;
+  pest_family?: string;
   water_demand_mm: number;
+  drought_tolerance?: number;
   nitrogen_impact_kg_ha: number;
   root_depth_cm: number;
   growth_days: number;
-  avg_input_cost_usd_ha: number;
-  avg_market_revenue_usd_ha: number;
-}
-
-export interface ModelDiagnostics {
-  method: string;
-  slope_per_year: number;
-  r2: number;
-  residual_std: number;
-  n_obs: number;
+  erosion_cover_factor?: number;
+  input_cost_usd_ha?: number;
+  market_revenue_usd_ha?: number;
 }
 
 export interface RiskReport {
   overall_score: number;
+  season_water_budgets_mm: number[];
+  october_moisture_anomaly_pct: number;
   soil_moisture_deficit: {
     score: number;
     trend: "improving" | "stable" | "worsening";
-    cumulative_deficit_mm_12m: number;
-    deficit_months_12m: number;
-    forecast: { month: string; value: number; lower: number; upper: number }[];
-    model: ModelDiagnostics;
+    october_moisture_anomaly_pct: number;
+    slope_mm_per_year: number;
+    r2: number;
   };
-  erosion_windows: { month: string; precip_mm: number; bare_field: boolean; risk_level: RiskLevel }[];
+  bare_field_erosion: {
+    score: number;
+    soil_k_factor: number;
+    bare_field_months: number[];
+    windows: { month_num: number; projected_precip_mm: number; bare_field: boolean; risk_level: RiskLevel }[];
+  };
   heat_stress: {
     score: number;
-    threshold_c: number;
-    months_over_threshold: number;
     peak_t2m_max_c: number;
-    model: ModelDiagnostics;
+    months_over_35c: number;
   };
   regional_saturation: {
-    score: number;
-    neighbor_farms_sampled: number;
-    crop_share_pct: number;
-    family_share_pct: number;
-    herfindahl_index: number;
-    oversupply_risk: boolean;
-    monoculture_pest_risk: boolean;
-    crop_shares: Record<string, number>;
+    region_id: string;
+    region_name: string;
+    oversupplied_crops: string[];
+    dominant_pest_family: string;
+    current_crop_oversupplied: boolean;
+    oversupply_penalty_pct: number;
   };
 }
 
 export interface SeasonMetrics {
   water_use_mm: number;
+  water_budget_mm?: number;
   water_deficit_mm: number;
   nitrogen_balance_kg_ha: number;
   fertilizer_n_kg_ha: number;
@@ -82,6 +80,7 @@ export interface SeasonMetrics {
 
 export interface Strategy {
   id: StrategyId;
+  short_id?: "A" | "B" | "C";
   name: string;
   description: string;
   seasons: {
@@ -90,8 +89,14 @@ export interface Strategy {
     crop_id: string;
     crop_name: string;
     category: string;
+    pest_family?: string;
     metrics: SeasonMetrics;
   }[];
+  objectives?: {
+    f_soil: number;
+    f_water: number;
+    f_cost: number;
+  };
   totals: {
     water_use_mm: number;
     water_deficit_mm: number;
@@ -106,33 +111,31 @@ export interface Strategy {
   warnings: string[];
 }
 
-export interface ClimateMonth {
-  month: string; // YYYY-MM
-  t2m_max_c: number;
-  precip_mm: number;
-  solar_kwh_m2_day: number;
-  evapotranspiration_mm: number;
-}
-
 export interface PredictResponse {
   request_id: string;
+  execution_ms?: number;
   location: Centroid;
   area_ha: number | null;
   inputs: Record<string, unknown>;
   climate: {
     source: "nasa_power" | "fallback";
+    grid_key?: string;
     lat: number;
     lon: number;
-    start_year: number;
-    end_year: number;
     cached: boolean;
-    /** Present in real responses (see api-contract.md); the offline demo may omit it. */
-    monthly?: ClimateMonth[];
+    months_count?: number;
   };
   risk: RiskReport;
   strategies: Strategy[];
   recommended_strategy: StrategyId;
-  optimizer: { method: string; population: number; generations: number; seed: number };
+  optimizer: {
+    method: string;
+    population: number;
+    generations: number;
+    seed: number;
+    lookup_source?: string;
+    in_memory_compute_ms?: number;
+  };
 }
 
 export interface Explanation {
@@ -145,6 +148,7 @@ export interface Explanation {
 
 export interface AnalysisRecord {
   id: string;
+  farm_id?: string | null;
   prediction: PredictResponse;
   explanation: Explanation;
   createdAt: string;
@@ -155,28 +159,4 @@ export interface UserProfile {
   name: string;
   email: string;
   role: "farmer" | "advisor" | "admin";
-}
-
-/** Farm document as returned by main-service (Mongo field names). */
-export interface Farm {
-  _id: string;
-  name: string;
-  polygon: Polygon;
-  centroid: Centroid;
-  areaHa: number;
-  soilType: SoilType;
-  currentCrop: string;
-  defaultPriority: Priority;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Row from GET /api/analyses. */
-export interface AnalysisSummary {
-  _id: string;
-  farm?: string;
-  recommendedStrategy: StrategyId;
-  climateSource: "nasa_power" | "fallback";
-  createdAt: string;
-  request?: { current_crop?: string; priority?: Priority };
 }
