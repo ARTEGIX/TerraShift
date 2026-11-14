@@ -1,20 +1,95 @@
+/**
+ * Typed client for main-service (`/api/*`). Mirrors docs/api-contract.md.
+ *
+ * Only the sample report (`/results/demo`) uses mock data. Real pages never fall
+ * back to the mock silently, so a farmer can't mistake the sample for their own field.
+ */
 import { MOCK_ANALYSIS, MOCK_CROPS } from "./mock";
-import type { AnalysisRecord, Centroid, CropInfo, Polygon, Priority, SoilType, UserProfile } from "./types";
+import type {
+  AnalysisRecord,
+  AnalysisSummary,
+  Centroid,
+  CropInfo,
+  Farm,
+  Polygon,
+  Priority,
+  SoilType,
+  UserProfile,
+} from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost/api";
+export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost/api").replace(/\/$/, "");
 const TOKEN_KEY = "terrashift_token";
+const USER_KEY = "terrashift_user";
+const AUTH_EVENT = "terrashift-auth";
+
+/* ------------------------------------------------------------------ auth storage */
 
 export function getToken(): string | null {
   return typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
 }
 
-export function setToken(token: string | null): void {
+export function getStoredUser(): UserProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as UserProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(token: string | null, user: UserProfile | null): void {
   if (typeof window === "undefined") return;
   if (token) window.localStorage.setItem(TOKEN_KEY, token);
   else window.localStorage.removeItem(TOKEN_KEY);
+  if (user) window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+  else window.localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Kept for compatibility with older imports. */
+export function setToken(token: string | null): void {
+  saveSession(token, token ? getStoredUser() : null);
+}
+
+export function onAuthChange(cb: () => void): () => void {
+  window.addEventListener(AUTH_EVENT, cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    window.removeEventListener(AUTH_EVENT, cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+
+/* ------------------------------------------------------------------ errors */
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly fieldErrors: Record<string, string[]> = {},
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+  get isAuth() {
+    return this.status === 401;
+  }
+}
+
+/** Turn backend messages into words a farmer understands. */
+function friendly(status: number, message: string | undefined): string {
+  if (status === 401) return "Please sign in again.";
+  if (status === 404) return "We couldn't find that. It may have been deleted.";
+  if (status === 409) return message ?? "That already exists.";
+  if (status === 429) return "Too many tries. Wait a few minutes and try again.";
+  if (status === 502 || status === 503 || status === 504)
+    return "The analysis service is busy or offline. Try again in a minute.";
+  if (status >= 500) return "Something went wrong on our side. Try again in a minute.";
+  return message ?? `Request failed (${status}).`;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -22,60 +97,131 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+    throw new ApiError(
+      timedOut
+        ? "This is taking too long. Check your internet and try again."
+        : "Can't reach the TerraShift server. Check your internet and try again.",
+      0,
+    );
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message ?? `Request failed (${res.status})`);
+    const fieldErrors = (body?.error?.details?.fieldErrors ?? {}) as Record<string, string[]>;
+    if (res.status === 401) saveSession(null, null);
+    throw new ApiError(friendly(res.status, body?.error?.message), res.status, fieldErrors);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-export async function login(email: string, password: string): Promise<{ token: string; user: UserProfile }> {
+/* ------------------------------------------------------------------ auth */
+
+export async function login(email: string, password: string): Promise<UserProfile> {
   const data = await request<{ token: string; user: UserProfile }>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  setToken(data.token);
-  return data;
+  saveSession(data.token, data.user);
+  return data.user;
 }
 
-export async function register(name: string, email: string, password: string): Promise<{ token: string; user: UserProfile }> {
+export async function register(name: string, email: string, password: string): Promise<UserProfile> {
   const data = await request<{ token: string; user: UserProfile }>("/auth/register", {
     method: "POST",
     body: JSON.stringify({ name, email, password }),
   });
-  setToken(data.token);
-  return data;
+  saveSession(data.token, data.user);
+  return data.user;
 }
 
+export async function logout(): Promise<void> {
+  try {
+    if (getToken()) await request<void>("/auth/logout", { method: "POST" }, 5_000);
+  } catch {
+    /* token is dropped locally either way */
+  }
+  saveSession(null, null);
+}
+
+/* ------------------------------------------------------------------ reference data */
+
+/** Crop list from the Lookup table. Falls back to the bundled copy of the same table offline. */
 export async function fetchCrops(): Promise<CropInfo[]> {
   try {
-    const { crops } = await request<{ crops: CropInfo[] }>("/crops");
-    return crops;
+    const { crops } = await request<{ crops: CropInfo[] }>("/crops", {}, 8_000);
+    return crops.length ? crops : MOCK_CROPS;
   } catch {
     return MOCK_CROPS;
   }
 }
 
+/* ------------------------------------------------------------------ farms */
+
+export interface NewFarm {
+  name: string;
+  polygon: Polygon;
+  centroid?: Centroid;
+  soil_type: SoilType;
+  current_crop: string;
+  default_priority?: Priority;
+}
+
+export async function listFarms(): Promise<Farm[]> {
+  return (await request<{ farms: Farm[] }>("/farms")).farms;
+}
+
+export async function createFarm(input: NewFarm): Promise<Farm> {
+  return (await request<{ farm: Farm }>("/farms", { method: "POST", body: JSON.stringify(input) })).farm;
+}
+
+export async function deleteFarm(id: string): Promise<void> {
+  await request<void>(`/farms/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/* ------------------------------------------------------------------ analyses */
+
+/** NASA fetch + Layer 1 + Layer 2 GA + Gemini; can take a while (nginx allows 60 s). */
+const ANALYSIS_TIMEOUT_MS = 70_000;
+
+export async function analyseFarm(farmId: string, priority?: Priority, plantingMonth?: number): Promise<AnalysisRecord> {
+  return request<AnalysisRecord>(
+    "/analyses",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        farm_id: farmId,
+        ...(priority ? { priority } : {}),
+        ...(plantingMonth ? { planting_month: plantingMonth } : {}),
+      }),
+    },
+    ANALYSIS_TIMEOUT_MS,
+  );
+}
+
+/** Ad-hoc analysis without saving a farm (contract allows it). */
 export async function createAnalysis(input: {
   polygon: Polygon;
   centroid?: Centroid;
   current_crop: string;
   soil_type: SoilType;
   priority: Priority;
+  planting_month?: number;
 }): Promise<AnalysisRecord> {
-  return request<AnalysisRecord>("/analyses", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return request<AnalysisRecord>("/analyses", { method: "POST", body: JSON.stringify(input) }, ANALYSIS_TIMEOUT_MS);
 }
 
-export async function fetchAnalysis(id: string): Promise<AnalysisRecord> {
-  if (id === "demo") return MOCK_ANALYSIS;
-  try {
-    return await request<AnalysisRecord>(`/analyses/${id}`);
-  } catch {
-    return MOCK_ANALYSIS;
-  }
+export async function listAnalyses(farmId?: string): Promise<AnalysisSummary[]> {
+  const q = farmId ? `?farm_id=${encodeURIComponent(farmId)}` : "";
+  return (await request<{ analyses: AnalysisSummary[] }>(`/analyses${q}`)).analyses;
+}
+
+export async function fetchAnalysis(id: string): Promise<AnalysisRecord & { isSample?: boolean }> {
+  if (id === "demo") return { ...MOCK_ANALYSIS, isSample: true };
+  return request<AnalysisRecord>(`/analyses/${encodeURIComponent(id)}`);
 }

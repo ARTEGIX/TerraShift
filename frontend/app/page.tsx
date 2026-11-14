@@ -1,60 +1,47 @@
+import { ArrowRight, Layers, MapPin, Satellite } from "lucide-react";
 import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <div className="space-y-12 py-6">
-      <section className="rounded-2xl bg-gradient-to-br from-leaf-900 via-leaf-700 to-soil-700 text-white p-8 md:p-12 shadow-lg">
-        <span className="inline-block text-xs uppercase tracking-wider bg-white/15 px-3 py-1 rounded-full mb-4">
-          Field Shift: Adapting Farms with NASA Data
-        </span>
-        <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight max-w-3xl">
-          Turn NASA satellite climate trends into resilient 3-season crop rotations.
+    <div className="mx-auto max-w-5xl space-y-12 px-4 py-8 sm:py-12">
+      <section className="rounded-3xl bg-gradient-to-br from-leaf-900 via-leaf-700 to-soil-700 p-7 text-white shadow-lg sm:p-12">
+        <p className="text-sm font-medium text-white/80">NASA Space Apps 2026 · Field Shift</p>
+        <h1 className="mt-3 max-w-2xl text-3xl font-extrabold leading-tight tracking-tight sm:text-5xl">
+          Plan your next three seasons with NASA climate data
         </h1>
-        <p className="mt-4 text-white/85 max-w-2xl text-base md:text-lg">
-          Draw your farm boundary, pick your current crop and soil type, and let our two-layer agronomy engine combine
-          NASA POWER agroclimatology time-series regression with a multi-objective genetic algorithm.
+        <p className="mt-4 max-w-xl text-lg text-white/85">
+          Draw your field, tell us your crop and soil, and compare three crop plans side by side: keep going as you are,
+          protect your soil and water, or earn more.
         </p>
-        <div className="mt-8 flex flex-wrap gap-4">
-          <Link
-            href="/farm"
-            className="px-5 py-3 rounded-xl bg-white text-leaf-900 font-semibold hover:bg-leaf-50 transition shadow"
-          >
-            Analyze My Field →
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <Link href="/farm" className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-white px-6 text-lg font-semibold text-leaf-900 shadow hover:bg-leaf-50">
+            Plan my field <ArrowRight className="size-5" aria-hidden />
           </Link>
-          <Link
-            href="/results/demo"
-            className="px-5 py-3 rounded-xl bg-white/15 text-white font-semibold hover:bg-white/25 transition border border-white/30"
-          >
-            View Live Demo Report
+          <Link href="/results/demo" className="inline-flex min-h-14 items-center justify-center rounded-xl border border-white/40 bg-white/10 px-6 text-lg font-semibold text-white hover:bg-white/20">
+            See a sample report
           </Link>
         </div>
       </section>
 
-      <section className="grid md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl p-6 border border-soil-100 shadow-sm">
-          <div className="text-2xl mb-2">🛰️</div>
-          <h2 className="font-bold text-slate-900">NASA POWER Agroclimatology</h2>
-          <p className="text-sm text-slate-600 mt-1">
-            Monthly temperature, bias-corrected rainfall, solar irradiance, and evapotranspiration cached per 1.1 km
-            grid cell in Redis.
-          </p>
-        </div>
-        <div className="bg-white rounded-xl p-6 border border-soil-100 shadow-sm">
-          <div className="text-2xl mb-2">📈</div>
-          <h2 className="font-bold text-slate-900">Layer 1: Time-Series Risk Engine</h2>
-          <p className="text-sm text-slate-600 mt-1">
-            OLS seasonal-trend regression + AR(1) residuals forecast soil moisture deficits, bare-field erosion windows,
-            heat stress, and regional monoculture saturation.
-          </p>
-        </div>
-        <div className="bg-white rounded-xl p-6 border border-soil-100 shadow-sm">
-          <div className="text-2xl mb-2">🧬</div>
-          <h2 className="font-bold text-slate-900">Layer 2: Genetic Rotation Optimizer</h2>
-          <p className="text-sm text-slate-600 mt-1">
-            Evolves 3-season crop sequences comparing Baseline (A), Soil &amp; Water Resilience (B), and Cost &amp;
-            Market Optimized (C), explained in plain language by Gemini.
-          </p>
-        </div>
+      <section aria-labelledby="how">
+        <h2 id="how" className="text-xl font-bold text-slate-900">
+          How it works
+        </h2>
+        <ol className="mt-4 grid gap-4 sm:grid-cols-3">
+          {[
+            { icon: MapPin, title: "Draw your field", text: "Trace it on the satellite map. We measure the size for you." },
+            { icon: Satellite, title: "We read NASA data", text: "Rain, heat and dryness records for your exact area, plus a forecast." },
+            { icon: Layers, title: "Compare 3 plans", text: "Water, money and soil health for each plan, explained in plain words." },
+          ].map(({ icon: Icon, title, text }, i) => (
+            <li key={title} className="card">
+              <Icon className="size-7 text-leaf-600" aria-hidden />
+              <p className="mt-3 font-semibold text-slate-900">
+                {i + 1}. {title}
+              </p>
+              <p className="mt-1 text-sm text-slate-600">{text}</p>
+            </li>
+          ))}
+        </ol>
       </section>
     </div>
   );

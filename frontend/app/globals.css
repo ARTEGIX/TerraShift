@@ -5,3 +5,38 @@
 body {
   @apply bg-soil-50 text-slate-900 antialiased;
 }
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-leaf-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-leaf-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:cursor-wait disabled:opacity-70;
+  }
+  .btn-secondary {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-5 text-base font-medium text-slate-800 ring-2 ring-slate-200 transition-colors hover:bg-slate-50 hover:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:opacity-60;
+  }
+  .input {
+    @apply block min-h-12 w-full rounded-xl border-2 border-slate-200 bg-white px-3 text-base outline-none focus:border-leaf-600;
+  }
+  .card {
+    @apply rounded-2xl bg-white p-5 shadow-sm ring-1 ring-soil-100;
+  }
+}
+
+/* Leaflet: keep the drawing toolbar below the village search box. */
+.ts-map .leaflet-top.leaflet-left {
+  top: 3.5rem;
+}
+.leaflet-container {
+  font-family: inherit;
+  background: #d6d3d1;
+}
+
+@media print {
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}

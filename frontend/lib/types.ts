@@ -106,6 +106,14 @@ export interface Strategy {
   warnings: string[];
 }
 
+export interface ClimateMonth {
+  month: string; // YYYY-MM
+  t2m_max_c: number;
+  precip_mm: number;
+  solar_kwh_m2_day: number;
+  evapotranspiration_mm: number;
+}
+
 export interface PredictResponse {
   request_id: string;
   location: Centroid;
@@ -118,6 +126,8 @@ export interface PredictResponse {
     start_year: number;
     end_year: number;
     cached: boolean;
+    /** Present in real responses (see api-contract.md); the offline demo may omit it. */
+    monthly?: ClimateMonth[];
   };
   risk: RiskReport;
   strategies: Strategy[];
@@ -145,4 +155,28 @@ export interface UserProfile {
   name: string;
   email: string;
   role: "farmer" | "advisor" | "admin";
+}
+
+/** Farm document as returned by main-service (Mongo field names). */
+export interface Farm {
+  _id: string;
+  name: string;
+  polygon: Polygon;
+  centroid: Centroid;
+  areaHa: number;
+  soilType: SoilType;
+  currentCrop: string;
+  defaultPriority: Priority;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Row from GET /api/analyses. */
+export interface AnalysisSummary {
+  _id: string;
+  farm?: string;
+  recommendedStrategy: StrategyId;
+  climateSource: "nasa_power" | "fallback";
+  createdAt: string;
+  request?: { current_crop?: string; priority?: Priority };
 }
