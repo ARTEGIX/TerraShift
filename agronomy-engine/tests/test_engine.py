@@ -171,6 +171,36 @@ def test_appeears_payload_aggregation_and_power_override():
     assert np.isclose(cube.matrix[0, 5], 0.62)
 
 
+def test_layer1_and_layer2_consume_soilgrids_and_vpd():
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 36.0 for k in ym_keys},
+                "T2M_MIN": {k: 24.0 for k in ym_keys},
+                "RH2M": {k: 40.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.0 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {"ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"}, "EVPTRNS": {"units": "MJ/m^2/day"}},
+    }
+    cube = build_cube_from_power(raw, 7.87, 80.77, "nasa:grid:7.87:80.77")
+    soilgrids = {"clay_pct": 18.0, "sand_pct": 62.0, "silt_pct": 20.0, "ph": 5.2, "soc_g_kg": 10.0}
+
+    l1_base = run_layer1_regression(cube=cube, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_sg = run_layer1_regression(
+        cube=cube, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=soilgrids
+    )
+
+    assert l1_sg.mean_vpd_kpa is not None and l1_sg.mean_vpd_kpa > 1.6
+    assert l1_sg.soil_profile["ph"] == 5.2
+    assert l1_sg.soil_profile["leaching_factor"] != l1_base.soil_profile["leaching_factor"]
+    strategies, _, _ = run_layer2_evolution("paddy_rice", "soil", l1_sg)
+    assert len(strategies) == 3
+
+
 def test_in_memory_layer1_and_layer2_pipeline_under_200ms():
     cube = build_fallback_cube(8.3114, 80.4037)
 

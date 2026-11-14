@@ -103,13 +103,19 @@ async def predict(req: PredictRequest) -> PredictResponse:
 
     # Layer 1: In-Memory Regression Engine
     t_compute = time.perf_counter()
+    effective_soil_type = (
+        soilgrids["inferred_soil_type"]
+        if soilgrids and "soil_type" not in req.model_fields_set
+        else req.soil_type
+    )
     layer1 = run_layer1_regression(
         cube=cube,
-        soil_type=req.soil_type,
+        soil_type=effective_soil_type,
         current_crop=req.current_crop,
         region_id=req.region_id,
         planting_month=req.planting_month,
         store=lookup_store,
+        soilgrids=soilgrids,
     )
 
     # Layer 2: In-Memory Multi-Objective Evolutionary Algorithm (pop=50, gen=30)

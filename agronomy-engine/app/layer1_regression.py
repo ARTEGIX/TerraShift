@@ -46,6 +46,8 @@ class Layer1RegressionOutput:
     region_profile: dict[str, Any]
     oversupply_penalty_vector: np.ndarray        # shape (N_crops,), float64 penalty (0.0 or 0.22)
     dominant_pest_family_code: int               # integer family id in `lookup_store.pest_family_vocab`
+    mean_vpd_kpa: float | None = None
+    frost_months: int = 0
 
     def to_summary_dict(self, current_crop_id: str) -> dict[str, Any]:
         oversupplied = list(self.region_profile.get("oversupplied_crops", []))
@@ -77,6 +79,8 @@ class Layer1RegressionOutput:
                 "score": round(self.heat_stress_score, 1),
                 "peak_t2m_max_c": round(self.peak_t2m_max_c, 2),
                 "months_over_35c": self.months_over_35c,
+                **({"mean_vpd_kpa": self.mean_vpd_kpa} if self.mean_vpd_kpa is not None else {}),
+                **({"frost_months": self.frost_months} if self.frost_months else {}),
             },
             "regional_saturation": {
                 "region_id": self.region_profile["_id"],
@@ -104,6 +108,59 @@ def _seasonal_design_matrix(t_idx: np.ndarray, month_numbers: np.ndarray) -> np.
     )
 
 
+def _enrich_soil_with_soilgrids(
+    soil: dict[str, Any],
+    soilgrids: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Refine static soil profile factors using live ISRIC SoilGrids telemetry when available."""
+    enriched = dict(soil)
+    if not soilgrids:
+        return enriched
+
+    clay = soilgrids.get("clay_pct")
+    sand = soilgrids.get("sand_pct")
+    silt = soilgrids.get("silt_pct")
+    soc = soilgrids.get("soc_g_kg")
+    ph = soilgrids.get("ph")
+
+    if sand is not None and clay is not None:
+        enriched["leaching_factor"] = round(float(np.clip(0.15 + 0.006 * sand - 0.003 * clay, 0.15, 0.75)), 3)
+    if silt is not None:
+        soc_val = float(soc) if soc is not None else 15.0
+        enriched["erosion_k_factor"] = round(
+            float(np.clip(0.18 + 0.004 * silt - 0.0025 * min(soc_val, 50.0), 0.12, 0.55)), 3
+        )
+    if ph is not None:
+        enriched["ph"] = float(ph)
+    if soc is not None:
+        enriched["soc_g_kg"] = float(soc)
+    return enriched
+
+
+def _compute_vpd_and_frost(cube: FusedClimateCube) -> tuple[float | None, int]:
+    """Compute mean Vapor Pressure Deficit (kPa) and frost month count from T2M_MIN/RH2M."""
+    extra = cube.extra_series or {}
+    raw_tmin = extra.get("t2m_min_c")
+    raw_rh = extra.get("rh2m_pct")
+
+    frost_months = 0
+    tmin_arr: np.ndarray | None = None
+    if isinstance(raw_tmin, list) and len(raw_tmin) == cube.matrix.shape[0]:
+        tmin_arr = np.asarray(raw_tmin, dtype=np.float64)
+        frost_months = int(np.sum(tmin_arr < 4.0))
+
+    mean_vpd_kpa: float | None = None
+    if isinstance(raw_rh, list) and len(raw_rh) == cube.matrix.shape[0]:
+        rh_arr = np.clip(np.asarray(raw_rh, dtype=np.float64), 5.0, 100.0)
+        tmax_arr = cube.matrix[:, COL_T2M_MAX]
+        t_mean = 0.5 * (tmax_arr + tmin_arr) if tmin_arr is not None else (tmax_arr - 4.0)
+        es = 0.6108 * np.exp((17.27 * t_mean) / (t_mean + 237.3))
+        vpd = es * (1.0 - rh_arr / 100.0)
+        mean_vpd_kpa = round(float(np.mean(vpd)), 3)
+
+    return mean_vpd_kpa, frost_months
+
+
 def run_layer1_regression(
     cube: FusedClimateCube,
     soil_type: str,
@@ -111,6 +168,7 @@ def run_layer1_regression(
     region_id: str | None = None,
     planting_month: int = 10,
     store: InMemoryLookupStore = lookup_store,
+    soilgrids: dict[str, Any] | None = None,
 ) -> Layer1RegressionOutput:
     """Project 3-season water budgets, Oct soil moisture anomaly, erosion risk & regional penalties."""
     mat = cube.matrix
@@ -118,8 +176,9 @@ def run_layer1_regression(
     t = np.arange(n, dtype=np.float64)
     months = cube.month_numbers
 
-    soil = store.resolve_soil_profile(soil_type)
+    soil = _enrich_soil_with_soilgrids(store.resolve_soil_profile(soil_type), soilgrids)
     region = store.resolve_region_profile(region_id, cube.lat)
+    mean_vpd_kpa, frost_months = _compute_vpd_and_frost(cube)
 
     precip = mat[:, COL_PRECIP]
     et = mat[:, COL_ET]
@@ -156,11 +215,12 @@ def run_layer1_regression(
     season_budgets = np.zeros(3, dtype=np.float64)
     season_labels: list[str] = []
 
+    vpd_evap_mult = 1.0 + max(0.0, ((mean_vpd_kpa or 0.0) - 1.6) * 0.12)
     for s in range(3):
         sl = slice(s * 6, (s + 1) * 6)
         eff_rain = float(np.sum(pred_precip[sl]) * retention)
         soil_reserve = float(soil["water_holding_mm_m"]) * 0.65
-        evap_loss = float(np.sum(pred_et[sl]) * 0.22)
+        evap_loss = float(np.sum(pred_et[sl]) * 0.22 * vpd_evap_mult)
         season_budgets[s] = max(140.0, (eff_rain + soil_reserve - evap_loss) * (0.85 + 0.15 * whc_factor))
         first_m = int(future_months[s * 6])
         label_name = "Maha" if first_m in (9, 10, 11, 12, 1, 2) else "Yala"
@@ -203,10 +263,11 @@ def run_layer1_regression(
         )
     bare_erosion_score = float(np.clip(np.mean(erosion_scores), 0.0, 100.0))
 
-    # 4. Heat stress risk from regressed T2M_MAX
+    # 4. Heat stress risk from regressed T2M_MAX + VPD/frost telemetry
     over_35 = int(np.sum(pred_t2m[:12] > 35.0))
     peak_tmax = float(np.max(pred_t2m[:12]))
-    heat_score = float(np.clip((peak_tmax - 31.0) * 11.0 + over_35 * 6.5, 0.0, 100.0))
+    vpd_penalty = max(0.0, ((mean_vpd_kpa or 0.0) - 1.6) * 10.0)
+    heat_score = float(np.clip((peak_tmax - 31.0) * 11.0 + over_35 * 6.5 + vpd_penalty + frost_months * 3.0, 0.0, 100.0))
 
     # 5. Regional neighbor-farm saturation penalties
     oversupply_mask = store.oversupplied_mask(region["_id"], cube.lat)
@@ -241,4 +302,6 @@ def run_layer1_regression(
         region_profile=region,
         oversupply_penalty_vector=oversupply_penalty_vector,
         dominant_pest_family_code=dom_family_code,
+        mean_vpd_kpa=mean_vpd_kpa,
+        frost_months=frost_months,
     )
