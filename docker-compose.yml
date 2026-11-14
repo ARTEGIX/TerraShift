@@ -16,17 +16,21 @@ services:
   main-service:
     build: ./main-service
     container_name: terrashift-main
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       PORT: ${MAIN_SERVICE_PORT:-4000}
-      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/terrashift}
+      ATLAS_MONGO_URI: ${ATLAS_MONGO_URI:-}
+      GENERAL_MONGO_URI: ${GENERAL_MONGO_URI:-${ATLAS_MONGO_URI:-mongodb://localhost:27017}/general_db?retryWrites=true&w=majority}
       REDIS_URL: ${REDIS_URL:-redis://redis-cache:6379}
       AGRONOMY_ENGINE_URL: ${AGRONOMY_ENGINE_URL:-http://agronomy-engine:8000}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-please-32chars}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
     expose:
       - "4000"
     depends_on:
-      mongo:
-        condition: service_healthy
       redis-cache:
         condition: service_healthy
       agronomy-engine:
@@ -36,28 +40,21 @@ services:
   agronomy-engine:
     build: ./agronomy-engine
     container_name: terrashift-agronomy
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
+      ATLAS_MONGO_URI: ${ATLAS_MONGO_URI:-}
+      LOOKUP_MONGO_URI: ${LOOKUP_MONGO_URI:-${ATLAS_MONGO_URI:-}/lookup_db?retryWrites=true&w=majority}
+      GENERAL_MONGO_URI: ${GENERAL_MONGO_URI:-${ATLAS_MONGO_URI:-}/general_db?retryWrites=true&w=majority}
       REDIS_URL: ${REDIS_URL:-redis://redis-cache:6379}
+      GA_POPULATION: ${GA_POPULATION:-50}
+      GA_GENERATIONS: ${GA_GENERATIONS:-30}
     expose:
       - "8000"
     depends_on:
       redis-cache:
         condition: service_healthy
-    restart: unless-stopped
-
-  mongo:
-    image: mongo:7
-    container_name: terrashift-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   redis-cache:
@@ -75,7 +72,7 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Optional: run the frontend in Docker too (`docker compose --profile full up`).
+  # Optional: run the frontend in Docker (`docker compose --profile full up`).
   # In production the frontend is deployed on Vercel.
   frontend:
     build:
@@ -89,5 +86,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongo-data:
   redis-data:

@@ -1,7 +1,4 @@
-"""Thin, failure-tolerant Redis JSON cache.
-
-If Redis is unreachable every call degrades to a no-op so the engine keeps working.
-"""
+"""Failure-tolerant Redis JSON cache for agronomy-engine (`redis://redis-cache:6379`)."""
 from __future__ import annotations
 
 import json
@@ -34,7 +31,7 @@ async def get_json(key: str) -> Any | None:
         raw = await get_client().get(key)
         return json.loads(raw) if raw else None
     except Exception as exc:  # noqa: BLE001
-        log.warning("cache get failed (%s): %s", key, exc)
+        log.warning("Redis cache get failed (%s): %s", key, exc)
         return None
 
 
@@ -43,7 +40,7 @@ async def set_json(key: str, value: Any, ttl_seconds: int | None = None) -> None
         ttl = ttl_seconds or get_settings().cache_ttl_seconds
         await get_client().set(key, json.dumps(value), ex=ttl)
     except Exception as exc:  # noqa: BLE001
-        log.warning("cache set failed (%s): %s", key, exc)
+        log.warning("Redis cache set failed (%s): %s", key, exc)
 
 
 async def ping() -> bool:

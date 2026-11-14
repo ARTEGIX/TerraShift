@@ -1,11 +1,20 @@
 import mongoose from "mongoose";
-import { env } from "../config/env";
+import { resolveGeneralMongoUri } from "../config/env";
 
 export async function connectMongo(): Promise<void> {
+  const uri = resolveGeneralMongoUri();
+  if (!uri) {
+    console.warn("⚠️ GENERAL_MONGO_URI / ATLAS_MONGO_URI not configured; running with in-memory fallback store.");
+    return;
+  }
   mongoose.set("strictQuery", true);
-  mongoose.connection.on("connected", () => console.log("✅ MongoDB connected"));
+  mongoose.connection.on("connected", () => console.log("✅ MongoDB Atlas (general_db) connected"));
   mongoose.connection.on("error", (err) => console.error("MongoDB error:", err.message));
-  await mongoose.connect(env.MONGO_URI, { serverSelectionTimeoutMS: 10_000 });
+  try {
+    await mongoose.connect(uri, { dbName: "general_db", serverSelectionTimeoutMS: 8_000 });
+  } catch (err) {
+    console.warn("⚠️ MongoDB Atlas unreachable, continuing in degraded mode:", (err as Error).message);
+  }
 }
 
 export function mongoReady(): boolean {
@@ -13,5 +22,7 @@ export function mongoReady(): boolean {
 }
 
 export async function disconnectMongo(): Promise<void> {
-  await mongoose.disconnect();
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.disconnect();
+  }
 }

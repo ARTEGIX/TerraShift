@@ -52,20 +52,22 @@ export async function register(name: string, email: string, password: string): P
 export async function fetchCrops(): Promise<CropInfo[]> {
   try {
     const { crops } = await request<{ crops: CropInfo[] }>("/crops");
-    return crops;
+    return crops.map((c) => ({ ...c, id: c.id ?? String(c._id) }));
   } catch {
     return MOCK_CROPS;
   }
 }
 
 export async function createAnalysis(input: {
+  farm_id?: string;
   polygon: Polygon;
   centroid?: Centroid;
   current_crop: string;
   soil_type: SoilType;
+  region_id?: string;
   priority: Priority;
 }): Promise<AnalysisRecord> {
-  return request<AnalysisRecord>("/analyses", {
+  return request<AnalysisRecord>("/analyze", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -74,7 +76,7 @@ export async function createAnalysis(input: {
 export async function fetchAnalysis(id: string): Promise<AnalysisRecord> {
   if (id === "demo") return MOCK_ANALYSIS;
   try {
-    return await request<AnalysisRecord>(`/analyses/${id}`);
+    return await request<AnalysisRecord>(`/simulation-runs/${id}`);
   } catch {
     return MOCK_ANALYSIS;
   }

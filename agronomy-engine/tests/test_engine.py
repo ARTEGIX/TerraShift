@@ -1,99 +1,138 @@
+import time
+
 import numpy as np
-import pandas as pd
 from fastapi.testclient import TestClient
 
-from app.crops import load_crops, resolve_crop_id
-from app.layer1_risk import SeasonalTrendModel, assess_risk
-from app.layer2_rot import optimize_rotations
+import seed_atlas
+from app.layer1_regression import run_layer1_regression
+from app.layer2_evolution import run_layer2_evolution
 from app.main import app
-from app.nasa_client import fallback_climate, parse_power_response
+from app.memory_store import lookup_store
+from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
 
 PAYLOAD = {
     "polygon": {
         "type": "Polygon",
-        "coordinates": [[[80.63, 7.29], [80.64, 7.29], [80.64, 7.30], [80.63, 7.30], [80.63, 7.29]]],
+        "coordinates": [
+            [
+                [80.3987, 8.3064],
+                [80.4087, 8.3064],
+                [80.4087, 8.3164],
+                [80.3987, 8.3164],
+                [80.3987, 8.3064],
+            ]
+        ],
     },
-    "centroid": {"lat": 7.2953, "lon": 80.6351},
-    "current_crop": "Paddy Rice",
-    "soil_type": "clay",
+    "centroid": {"lat": 8.3114, "lon": 80.4037},
+    "current_crop": "paddy_rice",
+    "soil_type": "soil_clay_loam",
+    "region_id": "region_lk_dryzone",
     "priority": "water",
 }
 
 
-def test_crop_lookup_has_12_valid_entries():
-    crops = load_crops()
-    assert len(crops) == 12
-    cats = {c["category"] for c in crops.values()}
-    assert cats <= {"cash_crop", "legume", "cover_crop", "drought_tolerant"}
-    assert crops["sunn_hemp"]["nitrogen_impact_kg_ha"] > 0
-    assert crops["maize"]["nitrogen_impact_kg_ha"] < 0
-    assert resolve_crop_id("Paddy Rice") == "paddy_rice"
+def test_seed_atlas_catalogs_and_demo_farm():
+    assert len(seed_atlas.CROPS_CATALOG_SEED) == 12
+    assert len(seed_atlas.SOIL_PROFILES_SEED) == 3
+    assert {s["_id"] for s in seed_atlas.SOIL_PROFILES_SEED} == {
+        "soil_sandy_loam",
+        "soil_clay_loam",
+        "soil_degraded_dry",
+    }
+    assert {r["_id"] for r in seed_atlas.REGIONAL_SATURATION_SEED} == {
+        "region_lk_dryzone",
+        "region_us_midwest",
+    }
+    assert seed_atlas.DEMO_FARM_SEED["_id"] == "farm_demo_01"
+    assert seed_atlas.DEMO_FARM_SEED["polygon"]["type"] == "Polygon"
 
 
-def test_seasonal_trend_model_recovers_trend():
-    idx = pd.period_range("2020-01", periods=60, freq="M")
-    t = np.arange(60)
-    y = 10 + 0.5 * t + 5 * np.sin(2 * np.pi * idx.month.to_numpy() / 12)
-    m = SeasonalTrendModel().fit(pd.Series(y, index=idx))
-    assert abs(m.slope_per_year - 6.0) < 1e-6
-    assert m.r2 > 0.99
-    assert len(m.forecast(12)) == 12
+def test_in_memory_lookup_store_matrix():
+    assert lookup_store.crop_matrix.shape == (12, 6)
+    assert lookup_store.crop_matrix.dtype == np.float64
+    assert lookup_store.crop_matrix.flags["C_CONTIGUOUS"]
+    assert lookup_store.resolve_crop_id("Paddy Rice") == "paddy_rice"
+    assert lookup_store.resolve_soil_profile("clay")["_id"] == "soil_clay_loam"
 
 
-def test_fallback_is_deterministic():
-    a = fallback_climate(7.3, 80.64, 2021, 2025)
-    b = fallback_climate(7.3, 80.64, 2021, 2025)
-    assert a == b and len(a.monthly) == 60 and a.source == "fallback"
+def test_nasa_fusion_36_month_cube_and_grid_key():
+    rlat, rlon, key = grid_cache_key(8.3114, 80.4037)
+    assert (rlat, rlon) == (8.31, 80.40)
+    assert key == "nasa:grid:8.31:80.40"
+
+    cube = build_fallback_cube(8.3114, 80.4037)
+    assert cube.matrix.shape == (36, 6)
+    assert cube.matrix.dtype == np.float64
+    assert len(cube.months) == 36
+    # Verify SMAP root-zone moisture (col 4) and NDVI (col 5) bounds
+    assert np.all((cube.matrix[:, 4] >= 10.0) & (cube.matrix[:, 4] <= 100.0))
+    assert np.all((cube.matrix[:, 5] >= 0.10) & (cube.matrix[:, 5] <= 0.90))
 
 
-def test_parse_power_response_handles_fill_and_annual():
+def test_build_cube_from_power_interpolates_fill_values():
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
     raw = {
-        "properties": {"parameter": {
-            "T2M_MAX": {"202401": 31.0, "202402": -999.0, "202403": 33.0, "202413": 32.0},
-            "PRECTOTCORR": {"202401": 2.0, "202402": 1.0, "202403": 3.0, "202413": 2.0},
-            "ALLSKY_SFC_SW_DWN": {"202401": 5.0, "202402": 5.5, "202403": 6.0, "202413": 5.5},
-            "EVPTRNS": {"202401": 9.8, "202402": 9.8, "202403": 9.8, "202413": 9.8},
-        }},
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: (32.0 if i != 5 else -999.0) for i, k in enumerate(ym_keys)},
+                "PRECTOTCORR": {k: 3.5 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 5.4 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
         "parameters": {"EVPTRNS": {"units": "MJ/m^2/day"}},
     }
-    data = parse_power_response(raw, 7.3, 80.6, 2024, 2024)
-    assert [m.month for m in data.monthly] == ["2024-01", "2024-02", "2024-03"]
-    assert data.monthly[1].t2m_max_c == 32.0           # interpolated
-    assert data.monthly[0].precip_mm == 62.0           # 2 mm/day × 31
-    assert data.monthly[0].evapotranspiration_mm == 124.0  # 9.8/2.45 = 4 mm/day × 31
+    cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
+    assert cube.matrix.shape == (36, 6)
+    assert cube.matrix[5, 0] == 32.0
 
 
-def test_layers_produce_three_distinct_strategies():
-    climate = fallback_climate(7.3, 80.64, 2021, 2025)
-    risk, ctx = assess_risk(climate, "paddy_rice", "clay")
-    assert 0 <= risk.overall_score <= 100
-    assert len(risk.erosion_windows) == 12
-    strategies, rec, _ = optimize_rotations("paddy_rice", "clay", "soil", ctx)
-    seqs = [tuple(s.crop_id for s in st.seasons) for st in strategies]
-    assert [s.id for s in strategies] == ["A", "B", "C"]
-    assert seqs[0] == ("paddy_rice",) * 3
-    assert len(set(seqs)) == 3
-    crops = load_crops()
-    assert any(crops[c]["category"] in ("legume", "cover_crop") for c in seqs[1])
-    # Baseline fertilizer N should not decrease season over season
-    fert = [s.metrics.fertilizer_n_kg_ha for s in strategies[0].seasons]
-    assert fert == sorted(fert)
-    assert rec in {"A", "B", "C"}
+def test_in_memory_layer1_and_layer2_pipeline_under_200ms():
+    cube = build_fallback_cube(8.3114, 80.4037)
+
+    t0 = time.perf_counter()
+    layer1 = run_layer1_regression(
+        cube=cube,
+        soil_type="soil_clay_loam",
+        current_crop="paddy_rice",
+        region_id="region_lk_dryzone",
+    )
+    strategies, recommended, meta = run_layer2_evolution(
+        current_crop_id="paddy_rice",
+        priority="water",
+        layer1=layer1,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert elapsed_ms < 200.0, f"Expected < 200ms, took {elapsed_ms:.2f}ms"
+    assert layer1.season_water_budgets_mm.shape == (3,)
+    assert [s["id"] for s in strategies] == [
+        "A_BASELINE",
+        "B_SOIL_WATER_RESILIENCE",
+        "C_COST_MARKET_OPTIMIZED",
+    ]
+    assert recommended in {"B_SOIL_WATER_RESILIENCE", "C_COST_MARKET_OPTIMIZED"}
+    assert meta["population"] == 50
+    assert meta["generations"] == 30
 
 
-def test_predict_endpoint_offline():
+def test_predict_and_reload_endpoints():
     with TestClient(app) as client:
-        assert client.get("/health").status_code == 200
+        h = client.get("/health")
+        assert h.status_code == 200
+        assert h.json()["lookup_store"]["crops_count"] == 12
+
+        reload_resp = client.post("/internal/reload-lookup")
+        assert reload_resp.status_code == 200
+        assert reload_resp.json()["reloaded"] is True
+
         r = client.post("/predict", json=PAYLOAD)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["climate"]["source"] == "fallback"
-        assert body["location"] == {"lat": 7.3, "lon": 80.64}
-        assert len(body["strategies"]) == 3
-        assert body["recommended_strategy"] in {"A", "B", "C"}
-
-
-def test_predict_rejects_unknown_crop():
-    with TestClient(app) as client:
-        r = client.post("/predict", json={**PAYLOAD, "current_crop": "dragonfruit"})
-        assert r.status_code == 422
+        assert body["climate"]["grid_key"] == "nasa:grid:8.31:80.40"
+        assert [s["id"] for s in body["strategies"]] == [
+            "A_BASELINE",
+            "B_SOIL_WATER_RESILIENCE",
+            "C_COST_MARKET_OPTIMIZED",
+        ]
+        assert body["optimizer"]["in_memory_compute_ms"] < 200.0

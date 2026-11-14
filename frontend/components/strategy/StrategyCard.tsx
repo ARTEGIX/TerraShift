@@ -8,6 +8,7 @@ interface Props {
 
 export default function StrategyCard({ strategy, recommended, note }: Props) {
   const t = strategy.totals;
+  const badgeLabel = strategy.short_id ?? strategy.id.split("_")[0];
   return (
     <div
       className={`rounded-2xl bg-white p-5 border shadow-sm flex flex-col justify-between ${
@@ -17,7 +18,7 @@ export default function StrategyCard({ strategy, recommended, note }: Props) {
       <div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-soil-100 text-soil-900">
-            Strategy {strategy.id}
+            Strategy {badgeLabel} ({strategy.id})
           </span>
           {recommended && (
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-leaf-600 text-white">

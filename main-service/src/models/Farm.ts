@@ -1,39 +1,46 @@
-import { Schema, Types, model } from "mongoose";
-import type { Polygon, Priority, SoilType } from "../types/contract";
+import { Schema, model } from "mongoose";
+import type { Polygon, Priority } from "../types/contract";
 
 export interface IFarm {
-  owner: Types.ObjectId;
+  _id: string;
+  owner?: string;
   name: string;
-  polygon: Polygon;
+  region_id: string;
+  soil_type: string;
+  current_crop: string;
+  default_priority: Priority;
+  area_ha: number;
   centroid: { lat: number; lon: number };
-  areaHa: number;
-  soilType: SoilType;
-  currentCrop: string;
-  defaultPriority: Priority;
-  createdAt: Date;
-  updatedAt: Date;
+  polygon: Polygon;
+  created_at?: Date;
+  updated_at?: Date;
 }
 
 const farmSchema = new Schema<IFarm>(
   {
-    owner: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    _id: { type: String, required: true },
+    owner: { type: String, index: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
-    polygon: {
-      type: { type: String, enum: ["Polygon"], required: true },
-      coordinates: { type: [[[Number]]], required: true },
-    },
+    region_id: { type: String, default: "region_lk_dryzone" },
+    soil_type: { type: String, required: true, default: "soil_clay_loam" },
+    current_crop: { type: String, required: true },
+    default_priority: { type: String, enum: ["cost", "water", "soil"], default: "water" },
+    area_ha: { type: Number, required: true },
     centroid: {
       lat: { type: Number, required: true },
       lon: { type: Number, required: true },
     },
-    areaHa: { type: Number, required: true },
-    soilType: { type: String, enum: ["clay", "loam", "sandy", "silt", "laterite"], required: true },
-    currentCrop: { type: String, required: true },
-    defaultPriority: { type: String, enum: ["cost", "water", "soil"], default: "soil" },
+    polygon: {
+      type: { type: String, enum: ["Polygon"], required: true },
+      coordinates: { type: [[[Number]]], required: true },
+    },
   },
-  { timestamps: true },
+  {
+    collection: "farms",
+    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+  },
 );
 
-farmSchema.index({ polygon: "2dsphere" });
+farmSchema.index({ polygon: "2dsphere" }, { name: "idx_farms_polygon_2dsphere" });
 
 export const Farm = model<IFarm>("Farm", farmSchema);

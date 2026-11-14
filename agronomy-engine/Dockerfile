@@ -11,6 +11,7 @@ RUN pip install -r requirements.txt
 
 COPY app ./app
 COPY data ./data
+COPY seed_atlas.py ./seed_atlas.py
 
 RUN useradd --create-home appuser
 USER appuser
