@@ -142,3 +142,9 @@ Auto-deployment is configured in [`.github/workflows/deploy-vercel.yml`](.github
    - `VERCEL_PROJECT_ID` (from `frontend/.vercel/project.json`)
 3. Push to `main` (or trigger **Deploy Frontend to Vercel** manually in GitHub Actions).
 4. Ensure your live Vercel URL is listed in `CORS_ORIGINS` in `/opt/TerraShift/.env` on Ubuntu, then run `docker compose up -d main-service`.
+
+---
+
+## 🌿 Team Git Workflow
+
+See [`docs/branching-strategy.md`](docs/branching-strategy.md) for our 6-member GitHub Flow branching rules and PR checklist.
