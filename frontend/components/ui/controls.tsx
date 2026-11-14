@@ -18,7 +18,7 @@ export function Question({
   const [showHelp, setShowHelp] = useState(false);
   return (
     <fieldset className="min-w-0 space-y-3">
-      <legend className="flex w-full items-center gap-2 text-base font-semibold text-slate-900">
+      <legend className="flex w-full items-center gap-2 text-[20px] font-semibold tracking-tight text-ink">
         <span>{label}</span>
         {help && (
           <button
@@ -26,16 +26,16 @@ export function Question({
             onClick={() => setShowHelp((v) => !v)}
             aria-expanded={showHelp}
             aria-label={`Help: ${label}`}
-            className="ml-auto rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            className="ml-auto grid size-9 place-items-center rounded-full text-ink-3 hover:bg-black/[0.05] hover:text-ink"
           >
             <CircleHelp className="size-5" aria-hidden />
           </button>
         )}
       </legend>
-      {help && showHelp && <p className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900">{help}</p>}
+      {help && showHelp && <p className="animate-fade-up rounded-2xl bg-sky-50 px-4 py-3 text-[15px] leading-relaxed text-sky-900">{help}</p>}
       {children}
       {error && (
-        <p role="alert" className="text-sm font-medium text-red-700">
+        <p role="alert" className="text-[15px] font-medium text-red-600">
           {error}
         </p>
       )}
@@ -72,22 +72,26 @@ export function ChoiceCards<T extends string>({
         return (
           <label
             key={o.value}
-            className={`relative flex min-h-[4rem] cursor-pointer items-center gap-3 rounded-xl border-2 bg-white px-3.5 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-leaf-600 ${
-              on ? "border-leaf-600 bg-leaf-50" : "border-slate-200 hover:border-slate-300"
+            className={`relative flex min-h-[4.25rem] cursor-pointer items-center gap-3.5 rounded-2xl bg-white px-4 py-3.5 transition active:scale-[0.99] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-leaf-600 ${
+              on ? "shadow-lift ring-2 ring-leaf-600" : "shadow-soft hover:shadow-lift"
             }`}
           >
             <input type="radio" name={name} className="sr-only" checked={on} onChange={() => onChange(o.value)} />
-            {o.swatch && <span aria-hidden className="size-10 shrink-0 rounded-lg ring-1 ring-black/10" style={{ background: o.swatch }} />}
+            {o.swatch && <span aria-hidden className="size-11 shrink-0 rounded-xl ring-1 ring-black/10" style={{ background: o.swatch }} />}
             {o.icon && (
               <span aria-hidden className={`shrink-0 ${on ? "text-leaf-700" : "text-slate-500"}`}>
                 {o.icon}
               </span>
             )}
             <span className="min-w-0 pr-4">
-              <span className="block text-[15px] font-semibold leading-tight text-slate-900">{o.label}</span>
-              {o.hint && <span className="mt-0.5 block text-sm leading-snug text-slate-600">{o.hint}</span>}
+              <span className="block text-[17px] font-semibold leading-tight text-ink">{o.label}</span>
+              {o.hint && <span className="mt-0.5 block text-[15px] leading-snug text-ink-3">{o.hint}</span>}
             </span>
-            {on && <Check className="absolute right-2.5 top-2.5 size-5 text-leaf-700" aria-hidden />}
+            {on && (
+              <span className="absolute right-3 top-3 grid size-6 place-items-center rounded-full bg-leaf-600 text-white" aria-hidden>
+                <Check className="size-4" />
+              </span>
+            )}
           </label>
         );
       })}

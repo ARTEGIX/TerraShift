@@ -4,7 +4,7 @@ import { Coins, Droplets, Layers3, Leaf } from "lucide-react";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { shortCrop } from "@/lib/labels";
-import type { SeasonMetrics, Strategy } from "@/lib/types";
+import { letterOf, type SeasonMetrics, type Strategy } from "@/lib/types";
 import { PLAN_COLOR, PLAN_SHORT } from "./StrategyCard";
 
 type Metric = "net_margin_usd_ha" | "water_use_mm" | "nitrogen_balance_kg_ha" | "som_pct";
@@ -30,7 +30,7 @@ const METRICS: { key: Metric; label: string; icon: typeof Coins; unit: string; k
   },
   {
     key: "nitrogen_balance_kg_ha",
-    label: "Soil nitrogen",
+    label: "Nitrogen",
     icon: Leaf,
     unit: "kg/ha",
     kind: "line",
@@ -39,7 +39,7 @@ const METRICS: { key: Metric; label: string; icon: typeof Coins; unit: string; k
   },
   {
     key: "som_pct",
-    label: "Soil organic matter",
+    label: "Organic matter",
     icon: Layers3,
     unit: "%",
     kind: "line",
@@ -67,7 +67,7 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
       formatter={(v, name) => [m.fmt(Number(v)), `Plan ${name}`]}
       labelFormatter={(l) => {
         const i = labels.indexOf(String(l));
-        return `${l} — ${strategies.map((s) => `${s.id}: ${shortCrop(s.seasons[i]?.crop_name ?? "")}`).join(" · ")}`;
+        return `${l} — ${strategies.map((s) => `${letterOf(s)}: ${shortCrop(s.seasons[i]?.crop_name ?? "")}`).join(" · ")}`;
       }}
       contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 13 }}
     />
@@ -79,11 +79,8 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
   ];
 
   return (
-    <section aria-labelledby="charts-h" className="card">
-      <h2 id="charts-h" className="text-xl font-bold text-slate-900">
-        Season by season
-      </h2>
-      <div role="tablist" aria-label="What to compare" className="mt-3 flex flex-wrap gap-2">
+    <section aria-label="Compare plans season by season">
+      <div role="tablist" aria-label="What to compare" className="segmented grid-cols-2 sm:grid-cols-4">
         {METRICS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -91,21 +88,18 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
             role="tab"
             aria-selected={metric === key}
             onClick={() => setMetric(key)}
-            className={`inline-flex min-h-11 items-center gap-2 rounded-full border-2 px-4 text-[15px] font-medium ${
-              metric === key ? "border-leaf-700 bg-leaf-700 text-white" : "border-slate-200 bg-white text-slate-800 hover:border-slate-300"
-            }`}
           >
             <Icon className="size-4" aria-hidden /> {label}
           </button>
         ))}
       </div>
-      <p className="mt-3 text-sm text-slate-600">{m.help}</p>
+      <p className="mt-4 text-[15px] text-ink-2">{m.help}</p>
 
-      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-700" aria-label="Legend">
+      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-ink-2" aria-label="Legend">
         {strategies.map((s) => (
           <li key={s.id} className="flex items-center gap-1.5">
-            <span className="inline-block size-3 rounded-sm" style={{ background: PLAN_COLOR[s.id], opacity: s.id === selected ? 1 : 0.55 }} aria-hidden />
-            Plan {s.id}: {PLAN_SHORT[s.id]}
+            <span className="inline-block size-3 rounded-sm" style={{ background: PLAN_COLOR[letterOf(s)], opacity: s.id === selected ? 1 : 0.55 }} aria-hidden />
+            Plan {letterOf(s)}: {PLAN_SHORT[letterOf(s)]}
           </li>
         ))}
       </ul>
@@ -118,7 +112,7 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
               {metric === "net_margin_usd_ha" && <ReferenceLine y={0} stroke="#64748b" />}
               {tooltip}
               {strategies.map((s) => (
-                <Bar key={s.id} dataKey={s.id} name={s.id} fill={PLAN_COLOR[s.id]} fillOpacity={s.id === selected ? 1 : 0.5} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar key={s.id} dataKey={s.id} name={s.id} fill={PLAN_COLOR[letterOf(s)]} fillOpacity={s.id === selected ? 1 : 0.5} radius={[4, 4, 0, 0]} isAnimationActive={false} />
               ))}
             </BarChart>
           ) : (
@@ -132,10 +126,10 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
                   type="linear"
                   dataKey={s.id}
                   name={s.id}
-                  stroke={PLAN_COLOR[s.id]}
+                  stroke={PLAN_COLOR[letterOf(s)]}
                   strokeWidth={s.id === selected ? 3 : 2}
                   strokeOpacity={s.id === selected ? 1 : 0.55}
-                  dot={{ r: 4, strokeWidth: 2, stroke: "#fff", fill: PLAN_COLOR[s.id] }}
+                  dot={{ r: 4, strokeWidth: 2, stroke: "#fff", fill: PLAN_COLOR[letterOf(s)] }}
                   activeDot={{ r: 6 }}
                   isAnimationActive={false}
                 />
@@ -154,7 +148,7 @@ export default function PlanCharts({ strategies, selected }: { strategies: Strat
                 <th className="py-1.5 pr-3 font-medium">Season</th>
                 {strategies.map((s) => (
                   <th key={s.id} className="py-1.5 pr-3 font-medium">
-                    Plan {s.id}
+                    Plan {letterOf(s)}
                   </th>
                 ))}
               </tr>

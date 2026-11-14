@@ -1,44 +1,49 @@
 import { ArrowRight, Layers, MapPin, Satellite } from "lucide-react";
 import Link from "next/link";
+import { FieldOrbit } from "@/components/ui/Loaders";
 
 export default function HomePage() {
   return (
-    <div className="mx-auto max-w-5xl space-y-12 px-4 py-8 sm:py-12">
-      <section className="rounded-3xl bg-gradient-to-br from-leaf-900 via-leaf-700 to-soil-700 p-7 text-white shadow-lg sm:p-12">
-        <p className="text-sm font-medium text-white/80">NASA Space Apps 2026 · Field Shift</p>
-        <h1 className="mt-3 max-w-2xl text-3xl font-extrabold leading-tight tracking-tight sm:text-5xl">
-          Plan your next three seasons with NASA climate data
+    <div className="mx-auto max-w-3xl px-5 pb-16 pt-10 sm:pt-16">
+      <section className="flex flex-col items-center text-center">
+        <FieldOrbit />
+        <p className="mt-8 text-[15px] font-semibold text-leaf-700">NASA Space Apps 2026 · Field Shift</p>
+        <h1 className="mt-3 text-[40px] font-bold leading-[1.1] tracking-tight text-ink sm:text-[56px]">
+          Plan your next three seasons.
         </h1>
-        <p className="mt-4 max-w-xl text-lg text-white/85">
-          Draw your field, tell us your crop and soil, and compare three crop plans side by side: keep going as you are,
-          protect your soil and water, or earn more.
+        <p className="mt-4 max-w-xl text-[19px] leading-relaxed text-ink-3">
+          Draw your field. We read NASA climate data for it and show you three crop plans, with what to do each month.
         </p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <Link href="/farm" className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-white px-6 text-lg font-semibold text-leaf-900 shadow hover:bg-leaf-50">
+        <div className="mt-8 flex w-full max-w-sm flex-col gap-3">
+          <Link href="/farm" className="btn-primary min-h-14 text-[19px]">
             Plan my field <ArrowRight className="size-5" aria-hidden />
           </Link>
-          <Link href="/results/demo" className="inline-flex min-h-14 items-center justify-center rounded-xl border border-white/40 bg-white/10 px-6 text-lg font-semibold text-white hover:bg-white/20">
-            See a sample report
+          <Link href="/results/demo" className="btn-plain justify-center py-2">
+            See a sample plan
           </Link>
         </div>
       </section>
 
-      <section aria-labelledby="how">
-        <h2 id="how" className="text-xl font-bold text-slate-900">
+      <section aria-labelledby="how" className="mt-16">
+        <h2 id="how" className="sr-only">
           How it works
         </h2>
-        <ol className="mt-4 grid gap-4 sm:grid-cols-3">
+        <ol className="grid gap-3 sm:grid-cols-3">
           {[
-            { icon: MapPin, title: "Draw your field", text: "Trace it on the satellite map. We measure the size for you." },
-            { icon: Satellite, title: "We read NASA data", text: "Rain, heat and dryness records for your exact area, plus a forecast." },
-            { icon: Layers, title: "Compare 3 plans", text: "Water, money and soil health for each plan, explained in plain words." },
+            { icon: MapPin, title: "Draw your field", text: "Trace it on the satellite map." },
+            { icon: Satellite, title: "We read NASA data", text: "Rain, heat and dry months for your area." },
+            { icon: Layers, title: "Get your plan", text: "Three options and a month-by-month calendar." },
           ].map(({ icon: Icon, title, text }, i) => (
-            <li key={title} className="card">
-              <Icon className="size-7 text-leaf-600" aria-hidden />
-              <p className="mt-3 font-semibold text-slate-900">
-                {i + 1}. {title}
-              </p>
-              <p className="mt-1 text-sm text-slate-600">{text}</p>
+            <li key={title} className="card flex items-start gap-4 sm:flex-col sm:gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-leaf-50 text-leaf-700">
+                <Icon className="size-5" aria-hidden />
+              </span>
+              <span>
+                <span className="block text-[17px] font-semibold text-ink">
+                  {i + 1}. {title}
+                </span>
+                <span className="mt-0.5 block text-[15px] text-ink-3">{text}</span>
+              </span>
             </li>
           ))}
         </ol>

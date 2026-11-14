@@ -1,16 +1,17 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Coins, Droplets, LogIn, Pencil, Sprout } from "lucide-react";
+import { ArrowLeft, ArrowRight, Coins, Droplets, Pencil, Sprout } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
-import { ApiError, analyseFarm, createFarm, fetchCrops, getToken } from "@/lib/api";
+import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
+import { analyseFarm, createFarm, fetchCrops } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
-import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, shortCrop } from "@/lib/labels";
+import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
 import { MOCK_CROPS } from "@/lib/mock";
 import type { CropInfo, Priority } from "@/lib/types";
 
@@ -20,13 +21,6 @@ const STEPS = [
   { title: "Your soil", sub: "Pick the one that looks most like yours" },
   { title: "Your main goal", sub: "We'll mark the plan that fits it best" },
 ] as const;
-
-const PROGRESS_MESSAGES = [
-  "Getting NASA weather records for your field…",
-  "Looking at rain, heat and soil dryness trends…",
-  "Testing thousands of crop rotations…",
-  "Writing the explanation in plain words…",
-];
 
 type Errors = Partial<Record<"field" | "crop" | "soil" | "priority", string>>;
 
@@ -52,21 +46,11 @@ export default function FarmWizardPage() {
   const [tried, setTried] = useState<Record<number, boolean>>({});
   const [drawSignal, setDrawSignal] = useState(0);
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [runError, setRunError] = useState<string | null>(null);
-  const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
     fetchCrops().then(setCrops);
-    setSignedIn(!!getToken());
   }, []);
-
-  useEffect(() => {
-    if (!running) return;
-    setProgress(0);
-    const t = setInterval(() => setProgress((p) => Math.min(p + 1, PROGRESS_MESSAGES.length - 1)), 6000);
-    return () => clearInterval(t);
-  }, [running]);
 
   const step = draft.step;
   const errors = tried[step] ? errorsFor(draft, step) : {};
@@ -84,10 +68,6 @@ export default function FarmWizardPage() {
       return;
     }
     if (step < 3) return goTo((step + 1) as FieldDraft["step"]);
-    if (!getToken()) {
-      setSignedIn(false);
-      return;
-    }
     await run();
   }
 
@@ -99,6 +79,7 @@ export default function FarmWizardPage() {
         name: draft.name.trim() || "My field",
         polygon: draft.polygon!,
         // centroid omitted: main-service computes an area-weighted one.
+        region_id: field?.centroid ? regionFor(field.centroid.lat) : undefined,
         soil_type: draft.soilType!,
         current_crop: draft.currentCrop!,
         default_priority: draft.priority!,
@@ -108,16 +89,11 @@ export default function FarmWizardPage() {
       router.push(`/results/${analysis.id}`);
     } catch (err) {
       setRunning(false);
-      if (err instanceof ApiError && err.isAuth) {
-        setSignedIn(false);
-        setRunError("Your sign-in has expired. Sign in again; your answers are saved.");
-      } else {
-        setRunError((err as Error).message);
-      }
+      setRunError((err as Error).message);
     }
   }
 
-  if (!loaded) return <div className="grid min-h-[60vh] place-items-center text-slate-500">Loading…</div>;
+  if (!loaded) return <PageLoader label="Loading…" />;
 
   const header = (
     <header className="space-y-3">
@@ -135,19 +111,19 @@ export default function FarmWizardPage() {
                   aria-label={`Step ${i + 1}: ${s.title}`}
                   className="block w-full py-1 disabled:cursor-not-allowed"
                 >
-                  <span className={`block h-2 rounded-full ${i <= step ? "bg-leaf-600" : "bg-slate-200"}`} />
+                  <span className={`block h-1.5 rounded-full transition-colors ${i <= step ? "bg-leaf-600" : "bg-black/[0.08]"}`} />
                 </button>
               </li>
             );
           })}
         </ol>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1.5 text-[15px] text-ink-3">
           Step {step + 1} of {STEPS.length}
         </p>
       </nav>
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{STEPS[step].title}</h1>
-        <p className="text-slate-600">{STEPS[step].sub}</p>
+        <h1 className="text-[34px] font-bold leading-tight tracking-tight text-ink">{STEPS[step].title}</h1>
+        <p className="mt-1 text-[17px] text-ink-3">{STEPS[step].sub}</p>
       </div>
     </header>
   );
@@ -155,20 +131,6 @@ export default function FarmWizardPage() {
   const footer = (
     <div className="space-y-2">
       {runError && <Notice tone="error">{runError}</Notice>}
-      {step === 3 && !signedIn && (
-        <Notice tone="info" icon={<LogIn className="size-4" />}>
-          <p className="font-semibold">Sign in to see your plans</p>
-          <p className="mt-0.5">Your field is saved to your account so you can come back to it. Your answers stay here while you sign in.</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Link href="/login?next=/farm" className="btn-primary !min-h-10 !px-4 text-sm">
-              Sign in or create account
-            </Link>
-            <Link href="/results/demo" className="btn-secondary !min-h-10 !px-4 text-sm">
-              See a sample report
-            </Link>
-          </div>
-        </Notice>
-      )}
       <div className="flex gap-3">
         {step > 0 && (
           <button type="button" onClick={() => goTo((step - 1) as FieldDraft["step"])} className="btn-secondary flex-1" disabled={running}>
@@ -194,26 +156,18 @@ export default function FarmWizardPage() {
     </div>
   );
 
-  const runningOverlay = running && (
-    <div className="fixed inset-0 z-[2000] grid place-items-center bg-white/85 px-6 backdrop-blur-sm" role="status" aria-live="polite">
-      <div className="max-w-sm text-center">
-        <Spinner className="mx-auto size-10 text-leaf-700" />
-        <p className="mt-4 text-lg font-semibold text-slate-900">{PROGRESS_MESSAGES[progress]}</p>
-        <p className="mt-1 text-sm text-slate-600">This usually takes under a minute. Please keep this page open.</p>
-      </div>
-    </div>
-  );
+  const runningOverlay = running && <AnalysisLoader />;
 
   /* ---------------- Step 1: the map gets most of the screen ---------------- */
   if (step === 0) {
     return (
       <div className="flex flex-col-reverse lg:h-[calc(100dvh-3.5rem)] lg:flex-row">
         {runningOverlay}
-        <aside className="flex w-full shrink-0 flex-col bg-white lg:w-[27rem] lg:border-r lg:border-soil-100">
+        <aside className="flex w-full shrink-0 flex-col bg-canvas lg:w-[27rem] lg:border-r lg:border-black/[0.08]">
           <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
             {header}
             <Question label="Trace your field" error={errors.field}>
-              <ol className="space-y-1 text-sm text-slate-600">
+              <ol className="space-y-1.5 text-[15px] leading-relaxed text-ink-2">
                 <li>1. Search your village or tap the location button on the map.</li>
                 <li>2. Zoom in until you can see your field.</li>
                 <li>3. Tap each corner of the field, then tap the first corner again.</li>
@@ -222,7 +176,7 @@ export default function FarmWizardPage() {
                 <Pencil className="size-5" aria-hidden /> {draft.polygon ? "Draw it again" : "Start drawing"}
               </button>
               {field?.ok && field.centroid && (
-                <p className="rounded-lg bg-leaf-50 px-3 py-2 text-sm text-leaf-900">
+                <p className="animate-fade-up rounded-2xl bg-leaf-50 px-4 py-3 text-[15px] text-leaf-900">
                   Field size: <strong>{field.areaHa} ha</strong> ({haToAcres(field.areaHa!).toFixed(1)} acres) ·{" "}
                   {formatLatLon(field.centroid)}
                 </p>
@@ -239,7 +193,7 @@ export default function FarmWizardPage() {
               />
             </Question>
           </div>
-          <div className="sticky bottom-0 border-t border-soil-100 bg-white px-5 py-3">{footer}</div>
+          <div className="sticky bottom-0 border-t border-black/[0.08] bg-canvas/85 px-5 py-3 backdrop-blur-xl">{footer}</div>
         </aside>
         <div className="h-[58vh] min-h-[22rem] flex-1 lg:h-auto">
           <FarmMapLazy polygon={draft.polygon} onPolygonChange={(p) => update({ polygon: p })} drawSignal={drawSignal} />
@@ -253,7 +207,7 @@ export default function FarmWizardPage() {
     <div className="mx-auto max-w-3xl px-4 pb-40 pt-6 sm:px-6">
       {runningOverlay}
       {header}
-      <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-soil-100 sm:p-7">
+      <div key={step} className="mt-8 animate-fade-up">
         {step === 1 && (
           <div className="space-y-8">
             <Question label="Which crop is in the field now?" error={errors.crop}>
@@ -263,15 +217,15 @@ export default function FarmWizardPage() {
                   return (
                     <label
                       key={c.id}
-                      className={`flex min-h-[3.75rem] cursor-pointer items-center gap-2.5 rounded-xl border-2 bg-white px-2.5 py-2 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-leaf-600 ${
-                        on ? "border-leaf-600 bg-leaf-50" : "border-slate-200 hover:border-slate-300"
+                      className={`flex min-h-[4rem] cursor-pointer items-center gap-3 rounded-2xl bg-white px-3 py-2.5 transition active:scale-[0.98] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-leaf-600 ${
+                        on ? "shadow-lift ring-2 ring-leaf-600" : "shadow-soft hover:shadow-lift"
                       }`}
                     >
                       <input type="radio" name="crop" className="sr-only" checked={on} onChange={() => update({ currentCrop: c.id })} />
                       <CropIcon category={c.category} />
                       <span className="min-w-0">
-                        <span className="block text-sm font-semibold leading-tight text-slate-900">{shortCrop(c.name)}</span>
-                        <span className="block text-xs leading-tight text-slate-500">{CATEGORY_LABEL[c.category]}</span>
+                        <span className="block text-[15px] font-semibold leading-tight text-ink">{shortCrop(c.name)}</span>
+                        <span className="mt-0.5 block text-[12px] leading-tight text-ink-3">{CATEGORY_LABEL[c.category]}</span>
                       </span>
                     </label>
                   );
@@ -336,7 +290,7 @@ export default function FarmWizardPage() {
                 }))}
               />
             </Question>
-            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700 ring-1 ring-slate-200">
+            <div className="card text-[15px] text-ink-2">
               <p className="font-semibold text-slate-900">Your answers</p>
               <ul className="mt-1.5 space-y-0.5">
                 <li>
@@ -364,7 +318,7 @@ export default function FarmWizardPage() {
         )}
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-soil-100 bg-white/95 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-black/[0.08] bg-canvas/85 backdrop-blur-xl">
         <div className="mx-auto max-w-3xl px-4 py-3 sm:px-6">{footer}</div>
       </div>
     </div>

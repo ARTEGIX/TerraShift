@@ -1,6 +1,7 @@
 /**
- * Typed client for main-service (`/api/*`). Mirrors docs/api-contract.md.
+ * Typed client for main-service (`/api/*`). Mirrors docs/api-contract.md (v0.2.0).
  *
+ * v0.2.0: farms and simulation runs no longer need a login; the auth routes still exist.
  * Only the sample report (`/results/demo`) uses mock data. Real pages never fall
  * back to the mock silently, so a farmer can't mistake the sample for their own field.
  */
@@ -155,7 +156,8 @@ export async function logout(): Promise<void> {
 export async function fetchCrops(): Promise<CropInfo[]> {
   try {
     const { crops } = await request<{ crops: CropInfo[] }>("/crops", {}, 8_000);
-    return crops.length ? crops : MOCK_CROPS;
+    // lookup_db documents use `_id`; normalise to `id` (same as the team's fix on main).
+    return crops.length ? crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })) : MOCK_CROPS;
   } catch {
     return MOCK_CROPS;
   }
@@ -167,6 +169,7 @@ export interface NewFarm {
   name: string;
   polygon: Polygon;
   centroid?: Centroid;
+  region_id?: string;
   soil_type: SoilType;
   current_crop: string;
   default_priority?: Priority;
@@ -189,9 +192,10 @@ export async function deleteFarm(id: string): Promise<void> {
 /** NASA fetch + Layer 1 + Layer 2 GA + Gemini; can take a while (nginx allows 60 s). */
 const ANALYSIS_TIMEOUT_MS = 70_000;
 
+/** POST /api/analyze with a saved farm. */
 export async function analyseFarm(farmId: string, priority?: Priority, plantingMonth?: number): Promise<AnalysisRecord> {
   return request<AnalysisRecord>(
-    "/analyses",
+    "/analyze",
     {
       method: "POST",
       body: JSON.stringify({
@@ -204,24 +208,28 @@ export async function analyseFarm(farmId: string, priority?: Priority, plantingM
   );
 }
 
-/** Ad-hoc analysis without saving a farm (contract allows it). */
+/** Ad-hoc analysis without saving a farm (POST /api/analyze). */
 export async function createAnalysis(input: {
+  farm_id?: string;
   polygon: Polygon;
   centroid?: Centroid;
   current_crop: string;
   soil_type: SoilType;
+  region_id?: string;
   priority: Priority;
   planting_month?: number;
 }): Promise<AnalysisRecord> {
-  return request<AnalysisRecord>("/analyses", { method: "POST", body: JSON.stringify(input) }, ANALYSIS_TIMEOUT_MS);
+  return request<AnalysisRecord>("/analyze", { method: "POST", body: JSON.stringify(input) }, ANALYSIS_TIMEOUT_MS);
 }
 
+/** GET /api/simulation-runs (optionally for one farm). */
 export async function listAnalyses(farmId?: string): Promise<AnalysisSummary[]> {
   const q = farmId ? `?farm_id=${encodeURIComponent(farmId)}` : "";
-  return (await request<{ analyses: AnalysisSummary[] }>(`/analyses${q}`)).analyses;
+  const body = await request<{ simulation_runs?: AnalysisSummary[]; analyses?: AnalysisSummary[] }>(`/simulation-runs${q}`);
+  return body.simulation_runs ?? body.analyses ?? [];
 }
 
 export async function fetchAnalysis(id: string): Promise<AnalysisRecord & { isSample?: boolean }> {
   if (id === "demo") return { ...MOCK_ANALYSIS, isSample: true };
-  return request<AnalysisRecord>(`/analyses/${encodeURIComponent(id)}`);
+  return request<AnalysisRecord>(`/simulation-runs/${encodeURIComponent(id)}`);
 }

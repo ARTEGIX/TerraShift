@@ -23,11 +23,11 @@ export default function Navbar() {
 
   const links = [
     { href: "/farm", label: "New plan" },
-    ...(user ? [{ href: "/farms", label: "My fields" }] : []),
+    { href: "/farms", label: "My fields" },
     { href: "/results/demo", label: "Sample report" },
   ];
   const linkCls = (href: string) =>
-    `rounded-lg px-3 py-2 hover:bg-leaf-50 hover:text-leaf-700 ${pathname?.startsWith(href) ? "text-leaf-700" : ""}`;
+    `rounded-full px-3.5 py-2 hover:bg-black/[0.05] ${pathname?.startsWith(href) ? "font-semibold text-ink" : ""}`;
 
   async function signOut() {
     await logout();
@@ -35,14 +35,14 @@ export default function Navbar() {
   }
 
   return (
-    <header className="sticky top-0 z-[1500] border-b border-soil-100 bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-[1500] border-b border-black/[0.08] bg-white/75 backdrop-blur-xl backdrop-saturate-150">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4">
         <Link href="/" className="flex items-center gap-2 text-lg font-bold text-leaf-700">
           <Sprout className="size-6" aria-hidden />
           TerraShift
         </Link>
 
-        <nav className="hidden items-center gap-1 text-sm font-medium text-slate-700 md:flex" aria-label="Main">
+        <nav className="hidden items-center gap-1 text-[15px] text-ink-2 md:flex" aria-label="Main">
           {links.map((l) => (
             <Link key={l.href} href={l.href} className={linkCls(l.href)}>
               {l.label}
@@ -56,7 +56,7 @@ export default function Navbar() {
               </button>
             </span>
           ) : (
-            <Link href="/login" className="ml-2 rounded-lg bg-leaf-600 px-4 py-2 text-white hover:bg-leaf-700">
+            <Link href="/login" className="ml-2 rounded-full bg-leaf-600 px-4 py-2 font-medium text-white hover:bg-leaf-700">
               Sign in
             </Link>
           )}
@@ -74,7 +74,7 @@ export default function Navbar() {
       </div>
 
       {open && (
-        <nav className="border-t border-soil-100 bg-white px-4 py-2 text-base font-medium text-slate-800 md:hidden" aria-label="Main">
+        <nav className="animate-fade-up border-t border-black/[0.08] bg-white/95 px-4 py-2 text-[17px] text-ink md:hidden" aria-label="Main">
           {links.map((l) => (
             <Link key={l.href} href={l.href} className="block rounded-lg px-3 py-3 hover:bg-leaf-50">
               {l.label}

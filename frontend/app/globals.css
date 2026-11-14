@@ -2,32 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design language (after Apple's Human Interface Guidelines):
+ * - Clarity: one main idea and one main action per screen; large, legible type.
+ * - Deference: quiet neutral surfaces so the farmer's field and the plan stand out.
+ * - Depth: soft shadows and translucency show what sits on top; details open on demand.
+ */
+
 body {
-  @apply bg-soil-50 text-slate-900 antialiased;
+  @apply bg-canvas text-ink antialiased;
+  -webkit-font-smoothing: antialiased;
 }
 
 @layer components {
   .btn-primary {
-    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-leaf-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-leaf-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:cursor-wait disabled:opacity-70;
+    @apply inline-flex min-h-[3.25rem] items-center justify-center gap-2 rounded-2xl bg-leaf-600 px-6 text-[17px] font-semibold text-white transition active:scale-[0.98] hover:bg-leaf-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:cursor-wait disabled:opacity-60;
   }
   .btn-secondary {
-    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-5 text-base font-medium text-slate-800 ring-2 ring-slate-200 transition-colors hover:bg-slate-50 hover:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:opacity-60;
+    @apply inline-flex min-h-[3.25rem] items-center justify-center gap-2 rounded-2xl bg-black/[0.05] px-6 text-[17px] font-medium text-ink transition active:scale-[0.98] hover:bg-black/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-leaf-700 disabled:opacity-60;
+  }
+  .btn-plain {
+    @apply inline-flex items-center gap-1 rounded-lg px-1 text-[17px] font-medium text-leaf-700 hover:underline;
   }
   .input {
-    @apply block min-h-12 w-full rounded-xl border-2 border-slate-200 bg-white px-3 text-base outline-none focus:border-leaf-600;
+    @apply block min-h-[3.25rem] w-full rounded-2xl border border-hairline bg-white px-4 text-[17px] outline-none transition focus:border-leaf-600 focus:ring-4 focus:ring-leaf-600/15;
   }
   .card {
-    @apply rounded-2xl bg-white p-5 shadow-sm ring-1 ring-soil-100;
+    @apply rounded-3xl bg-white p-5 shadow-soft sm:p-6;
+  }
+  /* iOS-style segmented control */
+  .segmented {
+    @apply grid gap-1 rounded-2xl bg-black/[0.06] p-1;
+  }
+  .segmented > button {
+    @apply flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-3 text-[15px] font-medium text-ink-2 transition;
+  }
+  .segmented > button[aria-selected="true"] {
+    @apply bg-white text-ink shadow-soft;
+  }
+  .eyebrow {
+    @apply text-[13px] font-semibold uppercase tracking-wide text-ink-3;
   }
 }
 
 /* Leaflet: keep the drawing toolbar below the village search box. */
 .ts-map .leaflet-top.leaflet-left {
-  top: 3.5rem;
+  top: 3.75rem;
 }
 .leaflet-container {
   font-family: inherit;
   background: #d6d3d1;
+}
+
+/* Respect "reduce motion" settings. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media print {
