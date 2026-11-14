@@ -9,6 +9,7 @@ one of TerraShift's canonical soil types (`soil_clay_loam`, `soil_sandy_loam`,
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -87,8 +88,12 @@ async def _fetch_soilgrids_raw(lat: float, lon: float) -> dict[str, Any]:
     for prop in SOILGRIDS_PROPERTIES:
         params.append(("property", prop))
 
+    t0 = time.perf_counter()
+    log.info("Calling ISRIC SoilGrids API: url=%s lat=%.2f lon=%.2f", settings.soilgrids_base_url, lat, lon)
     async with httpx.AsyncClient(timeout=settings.soilgrids_timeout_seconds) as client:
         resp = await client.get(settings.soilgrids_base_url, params=params)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info("ISRIC SoilGrids API response: status=%d elapsed=%.1fms lat=%.2f lon=%.2f", resp.status_code, elapsed_ms, lat, lon)
         resp.raise_for_status()
         return resp.json()
 

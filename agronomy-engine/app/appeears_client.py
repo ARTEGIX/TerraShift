@@ -17,6 +17,7 @@ import asyncio
 import csv
 import io
 import logging
+import time
 from datetime import date
 from typing import Any
 
@@ -181,7 +182,10 @@ async def prefetch_appeears_point(
     payload = build_point_task_payload(rlat, rlon, start_year, end_year)
 
     async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+        t0 = time.perf_counter()
+        log.info("Calling NASA AppEEARS API: POST %s/task lat=%.2f lon=%.2f", base, rlat, rlon)
         submit_resp = await client.post(f"{base}/task", json=payload)
+        log.info("NASA AppEEARS POST /task response: status=%d elapsed=%.1fms", submit_resp.status_code, (time.perf_counter() - t0) * 1000.0)
         submit_resp.raise_for_status()
         task_id = submit_resp.json()["task_id"]
         log.info("AppEEARS task submitted for %s: task_id=%s", key, task_id)
@@ -191,6 +195,7 @@ async def prefetch_appeears_point(
             status_resp = await client.get(f"{base}/task/{task_id}")
             status_resp.raise_for_status()
             status = status_resp.json().get("status", "")
+            log.info("NASA AppEEARS GET /task/%s: status=%s", task_id, status)
             if status == "done":
                 break
             if status in {"error", "expired"}:
@@ -201,6 +206,7 @@ async def prefetch_appeears_point(
             raise TimeoutError(f"AppEEARS task {task_id} timed out after {timeout_s}s")
 
         bundle_resp = await client.get(f"{base}/bundle/{task_id}")
+        log.info("NASA AppEEARS GET /bundle/%s: status=%d", task_id, bundle_resp.status_code)
         bundle_resp.raise_for_status()
         files = bundle_resp.json().get("files", [])
 
@@ -211,7 +217,9 @@ async def prefetch_appeears_point(
             if not fname.endswith(".csv"):
                 continue
             file_id = f["file_id"]
+            t_dl = time.perf_counter()
             dl = await client.get(f"{base}/bundle/{task_id}/{file_id}")
+            log.info("NASA AppEEARS CSV download: file=%s status=%d elapsed=%.1fms", fname, dl.status_code, (time.perf_counter() - t_dl) * 1000.0)
             dl.raise_for_status()
             if "MOD13Q1" in fname:
                 modis_csv = dl.text

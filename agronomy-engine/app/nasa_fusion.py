@@ -20,6 +20,7 @@ from __future__ import annotations
 import calendar
 import logging
 import math
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -160,8 +161,12 @@ async def _fetch_power_raw(lat: float, lon: float, start_year: int, end_year: in
         "end": end_year,
         "format": "JSON",
     }
+    t0 = time.perf_counter()
+    log.info("Calling NASA POWER API: url=%s lat=%.2f lon=%.2f years=%s-%s", settings.nasa_power_base_url, lat, lon, start_year, end_year)
     async with httpx.AsyncClient(timeout=settings.nasa_timeout_seconds) as client:
         resp = await client.get(settings.nasa_power_base_url, params=params)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info("NASA POWER API response: status=%d elapsed=%.1fms lat=%.2f lon=%.2f", resp.status_code, elapsed_ms, lat, lon)
         resp.raise_for_status()
         return resp.json()
 
