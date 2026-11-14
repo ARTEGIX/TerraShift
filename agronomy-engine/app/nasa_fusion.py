@@ -33,8 +33,10 @@ from app.config import get_settings
 log = logging.getLogger(__name__)
 
 PARAMETERS = ("T2M_MAX", "PRECTOTCORR", "ALLSKY_SFC_SW_DWN", "EVPTRNS")
+EXTRA_PARAMETERS = ("T2M_MIN", "RH2M")
 FILL_VALUE = -999.0
 LATENT_HEAT_MJ_PER_KG = 2.45
+MJ_PER_KWH = 3.6
 FUSION_MONTHS = 36
 
 # Column indices in the (36, 6) fused NumPy array
@@ -58,9 +60,10 @@ class FusedClimateCube:
     months: list[str]            # length 36, "YYYY-MM"
     month_numbers: np.ndarray    # shape (36,), int32 (1..12)
     matrix: np.ndarray           # shape (36, 6), float64
+    extra_series: dict[str, list[float]] | None = None
 
     def to_cache_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "lat": self.lat,
             "lon": self.lon,
             "grid_key": self.grid_key,
@@ -69,6 +72,9 @@ class FusedClimateCube:
             "month_numbers": self.month_numbers.tolist(),
             "matrix": self.matrix.tolist(),
         }
+        if self.extra_series:
+            payload["extra_series"] = self.extra_series
+        return payload
 
     @classmethod
     def from_cache_dict(cls, data: dict[str, Any], cached: bool = True) -> "FusedClimateCube":
@@ -81,23 +87,30 @@ class FusedClimateCube:
             months=list(data["months"]),
             month_numbers=np.asarray(data["month_numbers"], dtype=np.int32),
             matrix=np.ascontiguousarray(data["matrix"], dtype=np.float64),
+            extra_series=data.get("extra_series"),
         )
 
     def to_monthly_records(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
+        extra = self.extra_series or {}
+        t2m_min = extra.get("t2m_min_c")
+        rh2m = extra.get("rh2m_pct")
         for i, m in enumerate(self.months):
             row = self.matrix[i]
-            out.append(
-                {
-                    "month": m,
-                    "t2m_max_c": round(float(row[COL_T2M_MAX]), 2),
-                    "precip_mm": round(float(row[COL_PRECIP]), 1),
-                    "solar_kwh_m2_day": round(float(row[COL_SOLAR]), 2),
-                    "evapotranspiration_mm": round(float(row[COL_ET]), 1),
-                    "smap_rootzone_pct": round(float(row[COL_SMAP_MOISTURE]), 1),
-                    "ndvi": round(float(row[COL_NDVI]), 3),
-                }
-            )
+            rec: dict[str, Any] = {
+                "month": m,
+                "t2m_max_c": round(float(row[COL_T2M_MAX]), 2),
+                "precip_mm": round(float(row[COL_PRECIP]), 1),
+                "solar_kwh_m2_day": round(float(row[COL_SOLAR]), 2),
+                "evapotranspiration_mm": round(float(row[COL_ET]), 1),
+                "smap_rootzone_pct": round(float(row[COL_SMAP_MOISTURE]), 1),
+                "ndvi": round(float(row[COL_NDVI]), 3),
+            }
+            if t2m_min and i < len(t2m_min):
+                rec["t2m_min_c"] = round(float(t2m_min[i]), 2)
+            if rh2m and i < len(rh2m):
+                rec["rh2m_pct"] = round(float(rh2m[i]), 1)
+            out.append(rec)
         return out
 
 
@@ -139,7 +152,7 @@ def _harmonize_smap_and_ndvi(
 async def _fetch_power_raw(lat: float, lon: float, start_year: int, end_year: int) -> dict[str, Any]:
     settings = get_settings()
     params = {
-        "parameters": ",".join(PARAMETERS),
+        "parameters": ",".join(PARAMETERS + EXTRA_PARAMETERS),
         "community": "AG",
         "latitude": lat,
         "longitude": lon,
@@ -153,24 +166,38 @@ async def _fetch_power_raw(lat: float, lon: float, start_year: int, end_year: in
         return resp.json()
 
 
+def _interpolate_series(raw_map: dict[str, float], ym_keys: list[str], name: str) -> np.ndarray:
+    """Convert a NASA POWER parameter dict into a gap-filled float64 array."""
+    arr = np.array([raw_map.get(k, FILL_VALUE) for k in ym_keys], dtype=np.float64)
+    arr[arr <= FILL_VALUE + 1] = np.nan
+    if np.all(np.isnan(arr)):
+        raise ValueError(f"NASA POWER parameter {name} is all NaN")
+    idx = np.arange(arr.size)
+    mask = np.isnan(arr)
+    if np.any(mask):
+        arr[mask] = np.interp(idx[mask], idx[~mask], arr[~mask])
+    return arr
+
+
 def build_cube_from_power(raw: dict[str, Any], lat: float, lon: float, key: str) -> FusedClimateCube:
     series: dict[str, dict[str, float]] = raw["properties"]["parameter"]
     meta: dict[str, Any] = raw.get("parameters", {})
     et_units = str(meta.get("EVPTRNS", {}).get("units", "MJ/m^2/day")).lower()
+    solar_units = str(meta.get("ALLSKY_SFC_SW_DWN", {}).get("units", "MJ/m^2/day")).lower()
 
     ym_keys = sorted(k for k in series["T2M_MAX"] if not k.endswith("13"))[-FUSION_MONTHS:]
     if len(ym_keys) < FUSION_MONTHS:
         raise ValueError(f"Expected {FUSION_MONTHS} monthly records, got {len(ym_keys)}")
 
-    cols = {p: np.array([series[p].get(k, FILL_VALUE) for k in ym_keys], dtype=np.float64) for p in PARAMETERS}
-    for p, arr in cols.items():
-        arr[arr <= FILL_VALUE + 1] = np.nan
-        if np.all(np.isnan(arr)):
-            raise ValueError(f"NASA POWER parameter {p} is all NaN")
-        idx = np.arange(arr.size)
-        mask = np.isnan(arr)
-        if np.any(mask):
-            arr[mask] = np.interp(idx[mask], idx[~mask], arr[~mask])
+    cols = {p: _interpolate_series(series[p], ym_keys, p) for p in PARAMETERS}
+
+    extra_series: dict[str, list[float]] = {}
+    for p, out_key in (("T2M_MIN", "t2m_min_c"), ("RH2M", "rh2m_pct")):
+        if p in series:
+            try:
+                extra_series[out_key] = _interpolate_series(series[p], ym_keys, p).tolist()
+            except ValueError:
+                pass
 
     months: list[str] = []
     month_numbers = np.zeros(FUSION_MONTHS, dtype=np.int32)
@@ -183,7 +210,7 @@ def build_cube_from_power(raw: dict[str, Any], lat: float, lon: float, key: str)
 
     t2m = cols["T2M_MAX"]
     precip = np.maximum(0.0, cols["PRECTOTCORR"] * days_arr)
-    solar = cols["ALLSKY_SFC_SW_DWN"]
+    solar = cols["ALLSKY_SFC_SW_DWN"] / MJ_PER_KWH if "mj" in solar_units else cols["ALLSKY_SFC_SW_DWN"]
     et_daily = cols["EVPTRNS"] / LATENT_HEAT_MJ_PER_KG if "mj" in et_units else cols["EVPTRNS"]
     et = np.maximum(10.0, et_daily * days_arr)
 
@@ -199,6 +226,7 @@ def build_cube_from_power(raw: dict[str, Any], lat: float, lon: float, key: str)
         months=months,
         month_numbers=month_numbers,
         matrix=np.ascontiguousarray(matrix, dtype=np.float64),
+        extra_series=extra_series or None,
     )
 
 

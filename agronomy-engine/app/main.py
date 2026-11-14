@@ -12,6 +12,7 @@ Pipeline (`POST /predict`):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -28,6 +29,7 @@ from app.layer2_evolution import run_layer2_evolution
 from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
 from app.schemas import PredictRequest, PredictResponse
+from app.soil_client import fetch_soilgrids_profile
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("agronomy-engine")
@@ -94,7 +96,10 @@ async def predict(req: PredictRequest) -> PredictResponse:
     t0 = time.perf_counter()
 
     # Step 0: Spatial-Temporal Data Fusion (~1km Redis Grid Cache + 36m NumPy array)
-    cube = await fetch_fused_climate(req.centroid.lat, req.centroid.lon)
+    cube, soilgrids = await asyncio.gather(
+        fetch_fused_climate(req.centroid.lat, req.centroid.lon),
+        fetch_soilgrids_profile(req.centroid.lat, req.centroid.lon),
+    )
 
     # Layer 1: In-Memory Regression Engine
     t_compute = time.perf_counter()
@@ -139,6 +144,7 @@ async def predict(req: PredictRequest) -> PredictResponse:
             "region_id": layer1.region_profile["_id"],
             "priority": req.priority,
             "planting_month": req.planting_month,
+            **({"soilgrids": soilgrids} if soilgrids else {}),
         },
         climate={
             "source": cube.source,

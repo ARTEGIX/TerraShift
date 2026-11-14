@@ -9,6 +9,7 @@ from app.layer2_evolution import run_layer2_evolution
 from app.main import app
 from app.memory_store import lookup_store
 from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
+from app.soil_client import classify_soil_type, parse_soilgrids_response
 
 PAYLOAD = {
     "polygon": {
@@ -85,6 +86,53 @@ def test_build_cube_from_power_interpolates_fill_values():
     cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
     assert cube.matrix.shape == (36, 6)
     assert cube.matrix[5, 0] == 32.0
+    assert np.isclose(cube.matrix[0, 2], 5.4 / 3.6)
+
+
+def test_build_cube_from_power_with_optional_t2m_min_and_rh2m():
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 32.0 for k in ym_keys},
+                "T2M_MIN": {k: 23.5 for k in ym_keys},
+                "RH2M": {k: 78.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.5 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {
+            "ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"},
+            "EVPTRNS": {"units": "MJ/m^2/day"},
+        },
+    }
+    cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
+    records = cube.to_monthly_records()
+    assert np.isclose(cube.matrix[0, 2], 5.0)
+    assert records[0]["t2m_min_c"] == 23.5
+    assert records[0]["rh2m_pct"] == 78.0
+
+
+def test_soilgrids_parser_and_classifier():
+    raw = {
+        "properties": {
+            "layers": [
+                {"name": "clay", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 323}}]},
+                {"name": "sand", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 424}}]},
+                {"name": "silt", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 253}}]},
+                {"name": "phh2o", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 57}}]},
+                {"name": "soc", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 478}}]},
+            ]
+        }
+    }
+    parsed = parse_soilgrids_response(raw, 7.87, 80.77)
+    assert parsed is not None
+    assert parsed["clay_pct"] == 32.3
+    assert parsed["ph"] == 5.7
+    assert parsed["inferred_soil_type"] == "soil_clay_loam"
+    assert classify_soil_type(10.0, 70.0, 5.0) == "soil_degraded_dry"
+    assert classify_soil_type(15.0, 60.0, 15.0) == "soil_sandy_loam"
 
 
 def test_in_memory_layer1_and_layer2_pipeline_under_200ms():
