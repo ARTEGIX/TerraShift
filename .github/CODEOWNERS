@@ -1,0 +1,17 @@
+# Replace the @placeholders with your teammates' GitHub usernames.
+# Each module has one owner; PRs touching it auto-request their review.
+
+*                                         @terrashift-lead
+/docker-compose.yml                       @terrashift-lead
+/nginx/                                   @terrashift-lead
+/docs/                                    @terrashift-lead
+/.github/                                 @terrashift-lead
+
+/agronomy-engine/app/nasa_client.py       @terrashift-data
+/agronomy-engine/app/cache.py             @terrashift-data
+/agronomy-engine/app/layer1_risk.py       @terrashift-risk
+/agronomy-engine/app/layer2_rot.py        @terrashift-rotation
+/agronomy-engine/data/                    @terrashift-rotation
+
+/main-service/                            @terrashift-backend
+/frontend/                                @terrashift-frontend
