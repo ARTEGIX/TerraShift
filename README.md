@@ -61,21 +61,84 @@ flowchart LR
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Local Development)
 
+### 1. Configure Environment & Seed Atlas (Optional)
 ```bash
-# 1. Configure environment variables
 cp .env.example .env
-# Add ATLAS_MONGO_URI (and optional GEMINI_API_KEY) to .env
+# Add ATLAS_MONGO_URI, JWT_SECRET, and optional GEMINI_API_KEY to .env
 
-# 2. (Optional) Seed MongoDB Atlas lookup_db + general_db
+# (Optional) Seed MongoDB Atlas lookup_db + general_db
 cd agronomy-engine && python seed_atlas.py && cd ..
+```
 
-# 3. Start Redis, Agronomy Engine, Main Service, and Nginx Gateway
+### 2. Start Backend Stack in Docker
+Start `redis-cache`, `agronomy-engine`, `main-service`, and `nginx` (bound to `127.0.0.1:8080:80` by default):
+```bash
 docker compose up --build -d
+curl http://localhost:8080/api/health
+```
 
-# 4. Run a full simulation via main-service
-curl -X POST http://localhost/api/analyze \
+Test a full simulation directly against the local gateway:
+```bash
+curl -X POST http://localhost:8080/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"farm_id": "farm_demo_01", "priority": "water"}'
 ```
+
+### 3. Run Frontend Locally (`npm run dev`)
+```bash
+cd frontend
+echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api" > .env.local
+npm install
+npm run dev
+```
+Open **[http://localhost:3000/farm](http://localhost:3000/farm)** in your browser.
+
+To stop all local containers:
+```bash
+docker compose down
+```
+
+---
+
+## ☁️ Production Deployment (Ubuntu VPS + Vercel)
+
+### 1. Backend on Ubuntu Server (Docker + HTTPS)
+1. Clone the repo and configure `.env` (including `ATLAS_MONGO_URI`, `JWT_SECRET`, `GEMINI_API_KEY`, and your Vercel URL in `CORS_ORIGINS`):
+   ```bash
+   git clone <your-repo-url> /opt/TerraShift
+   cd /opt/TerraShift
+   cp .env.example .env
+   # Set CORS_ORIGINS=https://your-app.vercel.app,http://localhost:3000
+   ```
+2. Start the backend containers (`nginx` binds `127.0.0.1:8080:80` so host Nginx can handle HTTPS):
+   ```bash
+   docker compose up --build -d
+   ```
+3. Enable HTTPS with Let's Encrypt (`Certbot`) using either a **zero-signup `sslip.io` domain** or your own domain/DuckDNS:
+   ```bash
+   PUBLIC_IP=$(curl -s4 ifconfig.me)
+   sudo ./scripts/setup-https.sh "${PUBLIC_IP}.sslip.io"
+   ```
+   Verify over HTTPS:
+   ```bash
+   curl "https://${PUBLIC_IP}.sslip.io/api/health"
+   ```
+
+### 2. Frontend on Vercel (via GitHub Actions)
+Auto-deployment is configured in [`.github/workflows/deploy-vercel.yml`](.github/workflows/deploy-vercel.yml) (works with both public and private GitHub Organization repos on Vercel's free Hobby plan):
+
+1. Link `frontend/` once from your local machine and set the API URL:
+   ```bash
+   cd frontend
+   npx vercel login
+   npx vercel link
+   printf "https://<YOUR-HTTPS-DOMAIN>/api" | npx vercel env add NEXT_PUBLIC_API_BASE_URL production
+   ```
+2. Add these 3 secrets in **GitHub Repo → Settings → Secrets and variables → Actions**:
+   - `VERCEL_TOKEN` (from `vercel.com/account/tokens`)
+   - `VERCEL_ORG_ID` (from `frontend/.vercel/project.json`)
+   - `VERCEL_PROJECT_ID` (from `frontend/.vercel/project.json`)
+3. Push to `main` (or trigger **Deploy Frontend to Vercel** manually in GitHub Actions).
+4. Ensure your live Vercel URL is listed in `CORS_ORIGINS` in `/opt/TerraShift/.env` on Ubuntu, then run `docker compose up -d main-service`.
