@@ -27,7 +27,7 @@ from typing import Any
 import httpx
 import numpy as np
 
-from app import cache
+from app import appeears_client, cache
 from app.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -179,7 +179,37 @@ def _interpolate_series(raw_map: dict[str, float], ym_keys: list[str], name: str
     return arr
 
 
-def build_cube_from_power(raw: dict[str, Any], lat: float, lon: float, key: str) -> FusedClimateCube:
+def _apply_appeears_override(
+    smap_pct: np.ndarray,
+    ndvi: np.ndarray,
+    months: list[str],
+    appeears_override: dict[str, Any] | None,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Replace simulated SMAP/NDVI with pre-fetched AppEEARS satellite arrays when aligned."""
+    if not appeears_override or appeears_override.get("months") != months:
+        return smap_pct, ndvi, False
+
+    applied = False
+    raw_smap = appeears_override.get("smap_moisture_pct")
+    if isinstance(raw_smap, list) and len(raw_smap) == len(months):
+        smap_pct = np.asarray(raw_smap, dtype=np.float64)
+        applied = True
+
+    raw_ndvi = appeears_override.get("ndvi")
+    if isinstance(raw_ndvi, list) and len(raw_ndvi) == len(months):
+        ndvi = np.asarray(raw_ndvi, dtype=np.float64)
+        applied = True
+
+    return smap_pct, ndvi, applied
+
+
+def build_cube_from_power(
+    raw: dict[str, Any],
+    lat: float,
+    lon: float,
+    key: str,
+    appeears_override: dict[str, Any] | None = None,
+) -> FusedClimateCube:
     series: dict[str, dict[str, float]] = raw["properties"]["parameter"]
     meta: dict[str, Any] = raw.get("parameters", {})
     et_units = str(meta.get("EVPTRNS", {}).get("units", "MJ/m^2/day")).lower()
@@ -215,13 +245,14 @@ def build_cube_from_power(raw: dict[str, Any], lat: float, lon: float, key: str)
     et = np.maximum(10.0, et_daily * days_arr)
 
     smap_pct, ndvi = _harmonize_smap_and_ndvi(precip, et, t2m)
+    smap_pct, ndvi, has_appeears = _apply_appeears_override(smap_pct, ndvi, months, appeears_override)
     matrix = np.column_stack([t2m, precip, solar, et, smap_pct, ndvi]).astype(np.float64)
 
     return FusedClimateCube(
         lat=lat,
         lon=lon,
         grid_key=key,
-        source="nasa_power",
+        source="nasa_power+appeears" if has_appeears else "nasa_power",
         cached=False,
         months=months,
         month_numbers=month_numbers,
@@ -287,14 +318,31 @@ async def fetch_fused_climate(lat: float, lon: float) -> FusedClimateCube:
     """Fetch or load from Redis (`nasa:grid:{lat:.2f}:{lon:.2f}`) the 36-month fused array."""
     rlat, rlon, key = grid_cache_key(lat, lon)
     cached_payload = await cache.get_json(key)
+    appeears_data = await appeears_client.get_cached_appeears_series(rlat, rlon)
+    if appeears_data is None:
+        appeears_client.trigger_background_prefetch(rlat, rlon)
+
     if cached_payload and "matrix" in cached_payload:
-        return FusedClimateCube.from_cache_dict(cached_payload, cached=True)
+        cube = FusedClimateCube.from_cache_dict(cached_payload, cached=True)
+        if appeears_data and cube.source == "nasa_power":
+            smap_pct, ndvi, has_appeears = _apply_appeears_override(
+                cube.matrix[:, COL_SMAP_MOISTURE],
+                cube.matrix[:, COL_NDVI],
+                cube.months,
+                appeears_data,
+            )
+            if has_appeears:
+                cube.matrix[:, COL_SMAP_MOISTURE] = smap_pct
+                cube.matrix[:, COL_NDVI] = ndvi
+                cube.source = "nasa_power+appeears"
+                await cache.set_json(key, cube.to_cache_dict(), ttl_seconds=get_settings().cache_ttl_seconds)
+        return cube
 
     start_year, end_year = _year_window_36m()
     try:
         raw = await _fetch_power_raw(rlat, rlon, start_year, end_year)
-        cube = build_cube_from_power(raw, rlat, rlon, key)
-        await cache.set_json(key, cube.to_cache_dict(), ttl_seconds=86_400)
+        cube = build_cube_from_power(raw, rlat, rlon, key, appeears_override=appeears_data)
+        await cache.set_json(key, cube.to_cache_dict(), ttl_seconds=get_settings().cache_ttl_seconds)
         return cube
     except Exception as exc:  # noqa: BLE001
         log.warning("NASA POWER fetch failed for %s (%s) — using deterministic 36m fallback.", key, exc)

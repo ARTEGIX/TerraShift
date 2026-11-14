@@ -8,6 +8,7 @@ from app.layer1_regression import run_layer1_regression
 from app.layer2_evolution import run_layer2_evolution
 from app.main import app
 from app.memory_store import lookup_store
+from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
 from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
 from app.soil_client import classify_soil_type, parse_soilgrids_response
 
@@ -133,6 +134,41 @@ def test_soilgrids_parser_and_classifier():
     assert parsed["inferred_soil_type"] == "soil_clay_loam"
     assert classify_soil_type(10.0, 70.0, 5.0) == "soil_degraded_dry"
     assert classify_soil_type(15.0, 60.0, 15.0) == "soil_sandy_loam"
+
+
+def test_appeears_payload_aggregation_and_power_override():
+    payload = build_point_task_payload(7.87, 80.77, 2023, 2025)
+    assert payload["task_type"] == "point"
+    assert len(payload["params"]["layers"]) == 2
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+    modis_csv += "\n".join(f"id,7.87,80.77,{m}-01,0.62" for i, m in enumerate(months) if i != 10)
+    smap_csv = "ID,Latitude,Longitude,Date,SPL4SMGP_008_Geophysical_Data_sm_rootzone_pctl\n"
+    smap_csv += "\n".join(f"id,7.87,80.77,{m}-01,44.5" for m in months)
+
+    agg = aggregate_appeears_csvs(modis_csv, smap_csv, months)
+    assert agg is not None
+    assert len(agg["ndvi"]) == 36
+    assert agg["ndvi"][10] == 0.62
+    assert agg["smap_moisture_pct"][0] == 44.5
+
+    ym_keys = [m.replace("-", "") for m in months]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 31.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 4.0 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {"EVPTRNS": {"units": "MJ/m^2/day"}},
+    }
+    cube = build_cube_from_power(raw, 7.87, 80.77, "nasa:grid:7.87:80.77", appeears_override=agg)
+    assert cube.source == "nasa_power+appeears"
+    assert np.isclose(cube.matrix[0, 4], 44.5)
+    assert np.isclose(cube.matrix[0, 5], 0.62)
 
 
 def test_in_memory_layer1_and_layer2_pipeline_under_200ms():

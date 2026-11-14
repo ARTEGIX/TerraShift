@@ -1,6 +1,6 @@
 import pytest
 
-from app import nasa_fusion, soil_client
+from app import appeears_client, nasa_fusion, soil_client
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +17,7 @@ def offline(monkeypatch):
 
     monkeypatch.setattr(nasa_fusion, "_fetch_power_raw", _boom)
     monkeypatch.setattr(soil_client, "_fetch_soilgrids_raw", _boom)
+    monkeypatch.setattr(appeears_client, "trigger_background_prefetch", lambda *_a, **_k: False)
     monkeypatch.setattr(nasa_fusion.cache, "get_json", _none)
     monkeypatch.setattr(nasa_fusion.cache, "set_json", _none)
     monkeypatch.setattr(nasa_fusion.cache, "ping", _none)
