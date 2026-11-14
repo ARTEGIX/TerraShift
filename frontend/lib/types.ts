@@ -111,6 +111,16 @@ export interface Strategy {
   warnings: string[];
 }
 
+export interface ClimateMonth {
+  month: string; // YYYY-MM
+  t2m_max_c: number;
+  precip_mm: number;
+  solar_kwh_m2_day: number;
+  evapotranspiration_mm: number;
+  smap_rootzone_pct?: number;
+  ndvi?: number;
+}
+
 export interface PredictResponse {
   request_id: string;
   execution_ms?: number;
@@ -124,6 +134,8 @@ export interface PredictResponse {
     lon: number;
     cached: boolean;
     months_count?: number;
+    /** 36 months of NASA POWER + SMAP + NDVI (contract v0.2.0). */
+    monthly?: ClimateMonth[];
   };
   risk: RiskReport;
   strategies: Strategy[];
@@ -160,3 +172,35 @@ export interface UserProfile {
   email: string;
   role: "farmer" | "advisor" | "admin";
 }
+
+/** `region_lk_dryzone` | `region_us_midwest` (lookup_db.regional_saturation) */
+export type RegionId = string;
+
+/** Farm document from general_db.farms (main-service v0.2.0, snake_case). */
+export interface Farm {
+  _id: string;
+  name: string;
+  region_id: RegionId;
+  soil_type: string;
+  current_crop: string;
+  default_priority: Priority;
+  area_ha: number;
+  centroid: Centroid;
+  polygon: Polygon;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Row from GET /api/simulation-runs. */
+export interface AnalysisSummary {
+  _id: string;
+  farm_id?: string | null;
+  recommended_strategy: StrategyId;
+  climate_source: "nasa_power" | "fallback";
+  created_at: string;
+  request?: { current_crop?: string; priority?: Priority };
+}
+
+/** "A_BASELINE" → "A". Uses `short_id` when the engine sends it. */
+export const letterOf = (s: { id: StrategyId; short_id?: "A" | "B" | "C" } | StrategyId): "A" | "B" | "C" =>
+  typeof s === "string" ? (s.charAt(0) as "A" | "B" | "C") : (s.short_id ?? (s.id.charAt(0) as "A" | "B" | "C"));

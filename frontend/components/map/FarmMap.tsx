@@ -1,86 +1,195 @@
 "use client";
 
-import type { Centroid, Polygon } from "@/lib/types";
+import "leaflet/dist/leaflet.css";
+import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 
-interface Props {
-  centroid: Centroid;
-  onChange: (centroid: Centroid, polygon: Polygon) => void;
+import L from "leaflet";
+import "@geoman-io/leaflet-geoman-free";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { BASE_LAYERS, LABELS_LAYER_URL, NASA_LAYERS, gibsTileUrl, type BaseLayerKey } from "@/lib/layers";
+import type { Polygon } from "@/lib/types";
+import LayerPanel, { type MapView } from "./LayerPanel";
+import PlaceSearch, { type BBox } from "./PlaceSearch";
+
+/**
+ * Interactive field map: draw / edit / delete one field polygon (Leaflet-Geoman),
+ * switch NASA GIBS overlays, and search for a village.
+ *
+ * Load it with `next/dynamic` and `ssr: false` (Leaflet needs `window`), e.g. via FarmMapLazy.
+ */
+export interface FarmMapProps {
+  polygon: Polygon | null;
+  onPolygonChange: (polygon: Polygon | null) => void;
+  /** Increment to start polygon drawing from an outside button. */
+  drawSignal?: number;
+  /** Read-only map (results page): no drawing tools. */
+  readOnly?: boolean;
 }
 
-const PRESET_LOCATIONS: { label: string; lat: number; lon: number }[] = [
-  { label: "Kandy / Mahaweli (Intermediate)", lat: 7.295, lon: 80.635 },
-  { label: "Anuradhapura (Dry Zone)", lat: 8.311, lon: 80.403 },
-  { label: "Jaffna Peninsula", lat: 9.661, lon: 80.025 },
-  { label: "Hambantota (Arid South)", lat: 6.124, lon: 81.118 },
+const FIELD_STYLE: L.PathOptions = { color: "#facc15", weight: 3, fillColor: "#facc15", fillOpacity: 0.15 };
+const TRANSPARENT_PX = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+const DEFAULT_CENTER: [number, number] = [
+  Number(process.env.NEXT_PUBLIC_MAP_CENTER_LAT ?? 7.87),
+  Number(process.env.NEXT_PUBLIC_MAP_CENTER_LON ?? 80.77),
 ];
 
-export function boxPolygon(lat: number, lon: number, halfDeg = 0.005): Polygon {
-  return {
-    type: "Polygon",
-    coordinates: [
-      [
-        [Number((lon - halfDeg).toFixed(5)), Number((lat - halfDeg).toFixed(5))],
-        [Number((lon + halfDeg).toFixed(5)), Number((lat - halfDeg).toFixed(5))],
-        [Number((lon + halfDeg).toFixed(5)), Number((lat + halfDeg).toFixed(5))],
-        [Number((lon - halfDeg).toFixed(5)), Number((lat + halfDeg).toFixed(5))],
-        [Number((lon - halfDeg).toFixed(5)), Number((lat - halfDeg).toFixed(5))],
-      ],
-    ],
-  };
+function toPolygon(layer: L.Polygon): Polygon {
+  const gj = layer.toGeoJSON(6).geometry as GeoJSON.Polygon;
+  return { type: "Polygon", coordinates: gj.coordinates as [number, number][][] };
 }
 
-export default function FarmMap({ centroid, onChange }: Props) {
-  function update(lat: number, lon: number) {
-    onChange({ lat, lon }, boxPolygon(lat, lon));
-  }
+function toLatLngs(p: Polygon) {
+  return p.coordinates[0].map(([lon, lat]) => L.latLng(lat, lon));
+}
+
+function DrawingTools({ polygon, onPolygonChange, drawSignal, readOnly }: FarmMapProps) {
+  const map = useMap();
+  const fieldRef = useRef<L.Polygon | null>(null);
+  const onChangeRef = useRef(onPolygonChange);
+  onChangeRef.current = onPolygonChange;
+
+  // Show the saved / initial polygon once.
+  useEffect(() => {
+    if (!polygon || fieldRef.current) return;
+    const layer = L.polygon(toLatLngs(polygon), FIELD_STYLE).addTo(map);
+    fieldRef.current = layer;
+    if (!readOnly) {
+      layer.on("pm:edit", () => onChangeRef.current(toPolygon(layer)));
+      layer.on("pm:dragend", () => onChangeRef.current(toPolygon(layer)));
+    }
+    map.fitBounds(layer.getBounds(), { padding: [60, 60], maxZoom: 17 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    map.pm.setGlobalOptions({
+      pathOptions: FIELD_STYLE,
+      templineStyle: { color: "#facc15" },
+      hintlineStyle: { color: "#facc15", dashArray: "5,5" },
+      snappable: true,
+      allowSelfIntersection: false,
+    });
+    map.pm.addControls({
+      position: "topleft",
+      drawPolygon: true,
+      drawRectangle: true,
+      editMode: true,
+      dragMode: true,
+      removalMode: true,
+      drawMarker: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
+      drawCircle: false,
+      drawText: false,
+      cutPolygon: false,
+      rotateMode: false,
+    });
+
+    const onCreate = (e: { layer: L.Layer }) => {
+      if (!(e.layer instanceof L.Polygon)) return;
+      const layer = e.layer;
+      if (fieldRef.current && fieldRef.current !== layer) fieldRef.current.remove();
+      fieldRef.current = layer;
+      layer.setStyle(FIELD_STYLE);
+      layer.on("pm:edit", () => onChangeRef.current(toPolygon(layer)));
+      layer.on("pm:dragend", () => onChangeRef.current(toPolygon(layer)));
+      map.pm.disableDraw();
+      onChangeRef.current(toPolygon(layer));
+    };
+    const onRemove = (e: { layer: L.Layer }) => {
+      if (e.layer === fieldRef.current) {
+        fieldRef.current = null;
+        onChangeRef.current(null);
+      }
+    };
+    map.on("pm:create", onCreate);
+    map.on("pm:remove", onRemove);
+    return () => {
+      map.off("pm:create", onCreate);
+      map.off("pm:remove", onRemove);
+      map.pm.removeControls();
+    };
+  }, [map, readOnly]);
+
+  useEffect(() => {
+    if (!readOnly && drawSignal) map.pm.enableDraw("Polygon");
+  }, [drawSignal, map, readOnly]);
+
+  return null;
+}
+
+function FlyTo({ target }: { target: { bbox: BBox; at: number } | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    const [w, s, e, n] = target.bbox;
+    map.flyToBounds([[s, w], [n, e]], { maxZoom: 16, duration: 1.2 });
+  }, [target, map]);
+  return null;
+}
+
+function ZoomWatcher({ onZoom }: { onZoom: (z: number) => void }) {
+  const map = useMapEvents({ zoomend: () => onZoom(map.getZoom()) });
+  useEffect(() => onZoom(map.getZoom()), [map, onZoom]);
+  return null;
+}
+
+function ZoomControl() {
+  const map = useMap();
+  useEffect(() => {
+    const ctl = L.control.zoom({ position: "bottomright" }).addTo(map);
+    return () => {
+      ctl.remove();
+    };
+  }, [map]);
+  return null;
+}
+
+export default function FarmMap(props: FarmMapProps) {
+  const [view, setView] = useState<MapView>({ base: "satellite", overlay: null, opacity: 0.7, date: null, showLabels: true });
+  const [zoom, setZoom] = useState(7);
+  const [flyTarget, setFlyTarget] = useState<{ bbox: BBox; at: number } | null>(null);
+  const onZoom = useCallback((z: number) => setZoom(z), []);
+
+  const base = BASE_LAYERS[view.base as BaseLayerKey];
+  const overlay = NASA_LAYERS.find((l) => l.key === view.overlay) ?? null;
+  const overlayUrl = overlay ? gibsTileUrl(overlay, view.date) : null;
+  const coarseNotice = overlay?.coarse && zoom > overlay.maxNativeZoom + 3;
 
   return (
-    <div className="bg-white rounded-xl border border-soil-100 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-sm text-slate-900">1. Farm Geofence &amp; Centroid</h2>
-        <span className="text-xs text-slate-500">GeoJSON Polygon (2dsphere)</span>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {PRESET_LOCATIONS.map((loc) => (
-          <button
-            key={loc.label}
-            type="button"
-            onClick={() => update(loc.lat, loc.lon)}
-            className="text-xs px-2.5 py-1 rounded-full border border-leaf-100 bg-leaf-50 text-leaf-700 hover:bg-leaf-100"
-          >
-            📍 {loc.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-slate-600 mb-1">Latitude (°N)</label>
-          <input
-            type="number"
-            step="0.001"
-            value={centroid.lat}
-            onChange={(e) => update(Number(e.target.value), centroid.lon)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+    <div className="ts-map relative h-full w-full overflow-hidden [container-type:size]">
+      <MapContainer center={DEFAULT_CENTER} zoom={7} minZoom={2} maxZoom={19} zoomControl={false} worldCopyJump className="h-full w-full">
+        <TileLayer key={view.base} url={base.url} attribution={base.attribution} maxNativeZoom={base.maxNativeZoom} maxZoom={19} />
+        {overlay && overlayUrl && (
+          <TileLayer
+            key={overlayUrl}
+            url={overlayUrl}
+            opacity={view.opacity}
+            maxNativeZoom={overlay.maxNativeZoom}
+            maxZoom={19}
+            errorTileUrl={TRANSPARENT_PX}
+            attribution={`NASA GIBS · ${overlay.mission}`}
+            zIndex={5}
           />
-        </div>
-        <div>
-          <label className="block text-xs text-slate-600 mb-1">Longitude (°E)</label>
-          <input
-            type="number"
-            step="0.001"
-            value={centroid.lon}
-            onChange={(e) => update(centroid.lat, Number(e.target.value))}
-            className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-          />
-        </div>
-      </div>
+        )}
+        {view.base === "satellite" && view.showLabels && <TileLayer url={LABELS_LAYER_URL} maxZoom={19} zIndex={10} />}
+        <DrawingTools {...props} />
+        <FlyTo target={flyTarget} />
+        <ZoomWatcher onZoom={onZoom} />
+        <ZoomControl />
+      </MapContainer>
 
-      <div className="rounded-lg bg-leaf-50/60 border border-dashed border-leaf-600/40 p-4 text-xs text-slate-600">
-        🗺️ <strong>Frontend module hook:</strong> Replace or augment this box-polygon selector with interactive
-        React-Leaflet polygon drawing inside <code>components/map/FarmMap.tsx</code> without touching any other file.
-      </div>
+      {!props.readOnly && <PlaceSearch onPlace={(bbox) => setFlyTarget({ bbox, at: Date.now() })} />}
+      <LayerPanel view={view} onChange={(patch) => setView((v) => ({ ...v, ...patch }))} compact={props.readOnly} />
+
+      {coarseNotice && overlay && (
+        <div className="pointer-events-none absolute bottom-10 left-1/2 z-[1000] w-[min(92%,26rem)] -translate-x-1/2 rounded-lg bg-black/75 px-3 py-2 text-center text-xs text-white">
+          Each &ldquo;{overlay.label.toLowerCase()}&rdquo; square is about {overlay.resolution} wide, bigger than most
+          fields. Read it as your area, not your exact field.
+        </div>
+      )}
     </div>
   );
 }
