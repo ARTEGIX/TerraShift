@@ -161,3 +161,61 @@ export interface Explanation {
   per_strategy: { id: StrategyId; headline: string; why: string; risks: string[]; first_steps: string[] }[];
   caveats: string[];
 }
+
+export interface ProjectSeason {
+  season_number: number;
+  season?: number;
+  season_label?: string;
+  crop_id: string;
+  crop_name?: string;
+  target_water_mm?: number;
+  input_cost_usd_ha?: number;
+  metrics: SeasonMetrics;
+}
+
+export interface IProject {
+  _id: string;
+  owner?: string;
+  name: string;
+  farm_id: string;
+  report_id: string;
+  selected_strategy: StrategyId;
+  seasons: ProjectSeason[];
+  totals: Record<string, number>;
+  objectives: { f_soil: number; f_water: number; f_cost: number };
+  warnings: string[];
+  recalculation_count: number;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+export interface ProjectRecalcSeasonInput {
+  crop_id: string;
+  target_water_mm?: number;
+  input_cost_usd_ha?: number;
+}
+
+export interface ProjectRecalcRequest {
+  centroid: Centroid;
+  soil_type: string;
+  current_crop: string;
+  region_id?: string;
+  priority: Priority;
+  planting_month?: number;
+  area_ha?: number;
+  seasons: ProjectRecalcSeasonInput[];
+}
+
+export interface ProjectRecalcResponse {
+  seasons: {
+    season_number: number;
+    season?: number;
+    season_label?: string;
+    crop_id: string;
+    crop_name: string;
+    metrics: SeasonMetrics;
+  }[];
+  objectives: { f_soil: number; f_water: number; f_cost: number };
+  totals: Record<string, number>;
+  warnings: string[];
+}

@@ -24,10 +24,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import cache
 from app.config import get_settings
 from app.layer1_regression import run_layer1_regression
-from app.layer2_evolution import run_layer2_evolution
+from app.layer2_evolution import _build_strategy_payload, run_layer2_evolution
 from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
-from app.schemas import PredictRequest, PredictResponse
+from app.schemas import PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("agronomy-engine")
@@ -154,3 +154,71 @@ async def predict(req: PredictRequest) -> PredictResponse:
         recommended_strategy=recommended,
         optimizer=optimizer_meta,
     )
+
+
+@app.post("/predict/project-recalculate", response_model=ProjectRecalcResponse, tags=["engine"])
+async def project_recalculate(req: ProjectRecalcRequest) -> ProjectRecalcResponse:
+    """Evaluate a fixed 3-season crop plan with optional per-season water/cost overrides.
+
+    Runs fetch_fused_climate + run_layer1_regression then calls _build_strategy_payload
+    with the fixed crop sequence (skipping GA search), applying user overrides per season.
+    """
+    # Step 0: Climate fusion (~1km Redis Grid Cache + 36m NumPy array)
+    cube = await fetch_fused_climate(req.centroid.lat, req.centroid.lon)
+
+    # Layer 1: In-Memory Regression Engine
+    layer1 = run_layer1_regression(
+        cube=cube,
+        soil_type=req.soil_type,
+        current_crop=req.current_crop,
+        region_id=req.region_id,
+        planting_month=req.planting_month,
+        store=lookup_store,
+    )
+
+    # Resolve crop indices for the fixed 3-season sequence
+    seq_list = [
+        lookup_store.crop_index.get(lookup_store.resolve_crop_id(s.crop_id) or s.crop_id, 0)
+        for s in req.seasons
+    ]
+    seq: tuple[int, int, int] = (seq_list[0], seq_list[1], seq_list[2])
+
+    # Build season_overrides list from request
+    overrides = [
+        {
+            "target_water_mm": s.target_water_mm,
+            "input_cost_usd_ha": s.input_cost_usd_ha,
+        }
+        for s in req.seasons
+    ]
+
+    # Evaluate the fixed plan via _build_strategy_payload (no GA search)
+    payload = _build_strategy_payload(
+        strategy_id="PROJECT_PLAN",
+        name="Project Plan",
+        description="User-defined 3-season project plan with optional overrides.",
+        seq=seq,
+        layer1=layer1,
+        store=lookup_store,
+        season_overrides=overrides,
+    )
+
+    seasons_out = [
+        {
+            "season_number": s["season"],
+            "season": s["season"],
+            "season_label": s.get("season_label"),
+            "crop_id": s["crop_id"],
+            "crop_name": s["crop_name"],
+            "metrics": s["metrics"],
+        }
+        for s in payload["seasons"]
+    ]
+
+    return ProjectRecalcResponse(
+        seasons=seasons_out,
+        objectives=payload["objectives"],
+        totals=payload["totals"],
+        warnings=payload["warnings"],
+    )
+

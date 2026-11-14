@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { mongoReady } from "../db/mongo";
 import { validateBody } from "../middleware/validate";
+import { Project } from "../models/Project";
 import { SimulationRun, type ISimulationRun } from "../models/SimulationRun";
 import { predict } from "../services/agronomyClient";
 import { explainSimulation } from "../services/llmExplainer";
@@ -10,6 +11,7 @@ import { HttpError } from "../utils/HttpError";
 import { asyncHandler } from "../utils/asyncHandler";
 import { polygonAreaHa, polygonCentroid } from "../utils/geo";
 import { findFarmById } from "./farms";
+import { deleteProjectsByReportIdFromMemory } from "./projects";
 import { analyzeInputSchema, type AnalyzeInput } from "./schemas";
 
 const router = Router();
@@ -19,6 +21,26 @@ interface StoredSimulation extends ISimulationRun {
 }
 
 const memoryRuns = new Map<string, StoredSimulation>();
+
+export function deleteRunsByFarmIdFromMemory(farmId: string): void {
+  for (const [id, r] of memoryRuns.entries()) {
+    if (r.farm_id === farmId) memoryRuns.delete(id);
+  }
+}
+
+export async function findRunById(id: string): Promise<StoredSimulation | null> {
+  const mem = memoryRuns.get(id);
+  if (mem) return mem;
+  if (mongoReady()) {
+    try {
+      const doc = await SimulationRun.findById(id).lean<ISimulationRun>();
+      if (doc) return { ...doc, id: String((doc as any)._id) } as StoredSimulation;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 /**
  * POST /api/analyze (and POST /api/analyses, POST /api/simulation-runs)
@@ -48,7 +70,7 @@ router.post(
         region_id: farm.region_id,
         priority: body.priority ?? farm.default_priority,
         area_ha: farm.area_ha,
-        ...(body.planting_month ? { planting_month: body.planting_month } : {}),
+        ...((body.planting_month ?? farm.planting_month) ? { planting_month: body.planting_month ?? farm.planting_month } : {}),
       };
     } else {
       const polygon = body.polygon as Polygon;
@@ -156,6 +178,23 @@ router.get(
       }
     }
     throw HttpError.notFound(`Simulation run '${id}' not found`);
+  }),
+);
+
+/** DELETE /api/simulation-runs/:id — cascade deletes linked projects */
+router.delete(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    const existing = await findRunById(id);
+    if (!existing) throw HttpError.notFound("Simulation run not found");
+    memoryRuns.delete(id);
+    deleteProjectsByReportIdFromMemory(id);
+    if (mongoReady()) {
+      await Project.deleteMany({ report_id: id });
+      await SimulationRun.deleteOne({ _id: id });
+    }
+    res.status(204).end();
   }),
 );
 

@@ -6,12 +6,14 @@ import analysesRouter from "./analyses";
 import authRouter from "./auth";
 import farmsRouter from "./farms";
 import healthRouter from "./health";
+import projectsRouter from "./projects";
 
 const router = Router();
 
 router.use("/health", healthRouter);
 router.use("/auth", authRouter);
 router.use("/farms", farmsRouter);
+router.use("/projects", projectsRouter);
 
 // Primary endpoint requested by specification + REST collection aliases
 router.use("/analyze", analysesRouter);
