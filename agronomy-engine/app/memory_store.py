@@ -152,12 +152,16 @@ class InMemoryLookupStore:
         """Connect to MongoDB Atlas `lookup_db` and refresh in-memory dictionaries + NumPy matrix."""
         uri = uri_override or get_settings().resolved_lookup_uri()
         if not uri:
-            log.info("LOOKUP_MONGO_URI not configured — using deterministic in-memory seed store.")
+            log.warning(
+                "⚠️ [DEGRADED] LOOKUP_MONGO_URI / ATLAS_MONGO_URI not configured — using deterministic local_seed_fallback."
+            )
             self._load_from_seed()
             return self.status()
 
+        masked = re.sub(r"(mongodb(?:\+srv)?://[^:]+:)[^@]+(@)", r"\1***\2", uri)
+        log.info("🔌 Connecting to MongoDB Atlas (lookup_db): %s", masked)
         try:
-            client: MongoClient = MongoClient(uri, serverSelectionTimeoutMS=4_000)
+            client: MongoClient = MongoClient(uri, serverSelectionTimeoutMS=5_000)
             db = client["lookup_db"]
             crops_docs = list(db["crops_catalog"].find({}))
             soil_docs = list(db["soil_profiles"].find({}))
@@ -165,20 +169,26 @@ class InMemoryLookupStore:
             client.close()
 
             if not crops_docs or not soil_docs or not region_docs:
-                log.warning("lookup_db collections empty on Atlas; falling back to local seed catalog.")
+                log.warning(
+                    "⚠️ [DEGRADED] lookup_db collections empty on Atlas (run seed_atlas.py); falling back to local_seed_fallback."
+                )
                 self._load_from_seed()
                 return self.status()
 
             self._populate(crops_docs, soil_docs, region_docs, source="mongodb_atlas_lookup_db")
             log.info(
-                "Loaded lookup_db from Atlas into RAM: %d crops (matrix %s), %d soils, %d regions",
+                "✅ Loaded lookup_db from Atlas into RAM: %d crops (matrix %s), %d soils, %d regions",
                 len(self.crop_ids),
                 self.crop_matrix.shape,
                 len(self.soil_profiles),
                 len(self.regional_saturation),
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("Atlas lookup_db unreachable (%s) — using deterministic seed store.", exc)
+            log.error(
+                "❌ [DB CONNECTION FAILED] Atlas lookup_db unreachable (%s) — using local_seed_fallback. "
+                "Check Atlas Network Access IP whitelist (0.0.0.0/0), credentials, or SRV DNS.",
+                exc,
+            )
             self._load_from_seed()
         return self.status()
 

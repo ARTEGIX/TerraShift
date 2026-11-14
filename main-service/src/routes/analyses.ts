@@ -82,6 +82,7 @@ router.post(
       });
       runId = String(doc._id);
     } else {
+      console.warn(`⚠️ [DEGRADED] MongoDB Atlas disconnected — saved simulation_run ${runId} in RAM only.`);
       memoryRuns.set(runId, {
         id: runId,
         farm_id: farmId,
