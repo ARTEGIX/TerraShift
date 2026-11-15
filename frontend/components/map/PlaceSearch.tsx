@@ -56,8 +56,8 @@ export default function PlaceSearch({ onPlace }: { onPlace: (bbox: BBox) => void
   }
 
   return (
-    <div className="absolute left-3 top-3 z-[1001] w-[min(20rem,calc(100cqw-1.5rem))]">
-      <form onSubmit={search} className="flex gap-1 rounded-xl bg-white/95 p-1 shadow-lg ring-1 ring-black/5">
+    <div className="absolute left-3 top-3 z-[1001] w-[calc(100%-1.5rem)] sm:w-[20rem] max-w-sm">
+      <form onSubmit={search} className="flex gap-1 rounded-xl bg-white/95 p-1 shadow-lg ring-1 ring-black/5 backdrop-blur">
         <label htmlFor="place-search" className="sr-only">
           Find your village or town
         </label>
@@ -65,14 +65,14 @@ export default function PlaceSearch({ onPlace }: { onPlace: (bbox: BBox) => void
           id="place-search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Find your village or town"
-          className="min-w-0 flex-1 rounded-lg px-2 py-2 text-sm outline-none"
+          placeholder="Search village or town…"
+          className="min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs sm:text-sm outline-none bg-transparent text-slate-800 placeholder:text-slate-400"
         />
-        <button type="submit" aria-label="Search" className="grid w-10 place-items-center rounded-lg bg-leaf-700 text-white hover:bg-leaf-900">
-          <Search className="size-4" aria-hidden />
+        <button type="submit" aria-label="Search" className="grid size-7 sm:size-8 place-items-center rounded-lg bg-leaf-700 text-white hover:bg-leaf-800 transition">
+          <Search className="size-3.5" aria-hidden />
         </button>
-        <button type="button" onClick={locate} aria-label="Use my location" title="Use my location" className="grid w-10 place-items-center rounded-lg text-slate-600 hover:bg-slate-100">
-          <LocateFixed className="size-4" aria-hidden />
+        <button type="button" onClick={locate} aria-label="Use my location" title="Use my location" className="grid size-7 sm:size-8 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 transition">
+          <LocateFixed className="size-3.5" aria-hidden />
         </button>
       </form>
       {(results.length > 0 || status === "empty" || status === "error" || status === "loading") && (
