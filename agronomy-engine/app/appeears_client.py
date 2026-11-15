@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 import numpy as np
 
-from app import cache
+from app import appeears_store, cache
 from app.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -81,6 +81,19 @@ def target_36_months(today: date | None = None) -> list[str]:
     end_year = (today or date.today()).year - 1
     start_year = end_year - 2
     return [f"{yr:04d}-{mo:02d}" for yr in range(start_year, end_year + 1) for mo in range(1, 13)]
+
+
+def _window_years(months: list[str] | None = None) -> tuple[int, int]:
+    seq = months or target_36_months()
+    return int(seq[0][:4]), int(seq[-1][:4])
+
+
+def _is_valid_appeears_payload(payload: Any) -> bool:
+    return isinstance(payload, dict) and ("smap_moisture_pct" in payload or "ndvi" in payload)
+
+
+def _redis_ttl_seconds() -> int:
+    return max(get_settings().cache_ttl_seconds, APPEEARS_CACHE_TTL_SECONDS)
 
 
 def build_point_task_payload(
@@ -224,12 +237,13 @@ async def _download_and_cache_bundle(
     base: str,
     headers: dict[str, str],
     task_id: str,
+    lat: float,
+    lon: float,
     cache_key: str,
     pending_key: str,
     months: list[str],
 ) -> dict[str, Any] | None:
-    """Download completed AppEEARS CSV bundle, aggregate, cache in Redis, and clear pending key."""
-    settings = get_settings()
+    """Download completed AppEEARS CSV bundle, aggregate, cache in L1 Redis + L2 general_db, and clear pending key."""
     bundle_resp = await client.get(f"{base}/bundle/{task_id}", headers=headers)
     log.info("NASA AppEEARS GET /bundle/%s: status=%d", task_id, bundle_resp.status_code)
     bundle_resp.raise_for_status()
@@ -271,8 +285,10 @@ async def _download_and_cache_bundle(
     await cache.set_json(
         cache_key,
         aggregated,
-        ttl_seconds=max(settings.cache_ttl_seconds, APPEEARS_CACHE_TTL_SECONDS),
+        ttl_seconds=_redis_ttl_seconds(),
     )
+    start_year, end_year = _window_years(months)
+    await appeears_store.save_appeears_series(cache_key, lat, lon, start_year, end_year, aggregated)
     await cache.delete_key(pending_key)
     log.info("Cached AppEEARS satellite series in Redis under %s", cache_key)
     return aggregated
@@ -293,8 +309,8 @@ async def prefetch_appeears_point(
     rlat, rlon, key = appeears_cache_key(lat, lon)
     _, _, pending_key = appeears_pending_key(rlat, rlon)
 
-    existing = await cache.get_json(key)
-    if existing and ("smap_moisture_pct" in existing or "ndvi" in existing):
+    existing = await get_cached_appeears_series(rlat, rlon)
+    if existing is not None:
         return existing
 
     base = settings.appeears_base_url.rstrip("/")
@@ -362,23 +378,30 @@ async def prefetch_appeears_point(
         else:
             raise TimeoutError(f"AppEEARS task {task_id} timed out after {timeout_s}s (kept pending in Redis)")
 
-        return await _download_and_cache_bundle(client, base, headers, task_id, key, pending_key, months)
+        return await _download_and_cache_bundle(client, base, headers, task_id, rlat, rlon, key, pending_key, months)
 
 
 async def get_cached_appeears_series(lat: float, lon: float) -> dict[str, Any] | None:
-    """Read pre-fetched AppEEARS SMAP + MODIS series from Redis without blocking."""
+    """Read AppEEARS series from Redis (L1), falling back to MongoDB `general_db` (L2)."""
     _, _, key = appeears_cache_key(lat, lon)
     payload = await cache.get_json(key)
-    if payload and ("smap_moisture_pct" in payload or "ndvi" in payload):
+    if _is_valid_appeears_payload(payload):
         return payload
+
+    start_year, end_year = _window_years()
+    l2_payload = await appeears_store.get_appeears_series(key, start_year, end_year)
+    if _is_valid_appeears_payload(l2_payload):
+        await cache.set_json(key, l2_payload, ttl_seconds=_redis_ttl_seconds())
+        log.info("Warm-loaded AppEEARS satellite series from general_db into Redis under %s", key)
+        return l2_payload
     return None
 
 
 async def get_appeears_status(lat: float, lon: float) -> dict[str, Any]:
     """Return current AppEEARS cache/pending status for `(lat, lon)` without blocking."""
     rlat, rlon, key = appeears_cache_key(lat, lon)
-    payload = await cache.get_json(key)
-    if payload and ("smap_moisture_pct" in payload or "ndvi" in payload):
+    payload = await get_cached_appeears_series(rlat, rlon)
+    if payload is not None:
         return {"status": "ready", "grid_key": key}
 
     _, _, pending_key = appeears_pending_key(rlat, rlon)

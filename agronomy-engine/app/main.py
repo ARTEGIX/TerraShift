@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import appeears_client, cache
+from app import appeears_client, appeears_store, cache
 from app.config import get_settings
 from app.forecast_client import fetch_seasonal_forecast
 from app.layer1_regression import run_layer1_regression
@@ -41,6 +41,7 @@ log = logging.getLogger("agronomy-engine")
 async def lifespan(_: FastAPI):
     lookup_store.reload_from_atlas()
     yield
+    await appeears_store.close()
     await cache.close()
 
 

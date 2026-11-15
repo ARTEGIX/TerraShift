@@ -436,3 +436,59 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
     assert cache_key in fake_redis
     assert res["ndvi"][0] == 0.55
     assert res["ecostress_esi"][0] == 0.72
+
+
+def test_appeears_l1_redis_and_l2_general_db_fallback_and_write(monkeypatch):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_get_json(k):
+        return fake_redis.get(k)
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_get(grid_key, start_year, end_year):
+        return fake_l2.get((grid_key, start_year, end_year))
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "get_json", fake_get_json)
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+
+    months = appeears_client.target_36_months()
+    start_year, end_year = int(months[0][:4]), int(months[-1][:4])
+    _, _, cache_key = appeears_client.appeears_cache_key(7.87, 80.77)
+
+    # Seed only L2 (simulating Redis restart / TTL expiry)
+    l2_payload = {
+        "source": "appeears_smap_modis",
+        "months": months,
+        "ndvi": [0.48] * 36,
+        "smap_moisture_pct": [52.0] * 36,
+    }
+    fake_l2[(cache_key, start_year, end_year)] = l2_payload
+
+    assert cache_key not in fake_redis
+    status = asyncio.run(appeears_client.get_appeears_status(7.87, 80.77))
+    assert status == {"status": "ready", "grid_key": cache_key}
+    # L2 hit should warm L1 Redis
+    assert fake_redis[cache_key] == l2_payload
+
+    # Clear L1 again and verify get_cached_appeears_series also warms L1 from L2
+    fake_redis.clear()
+    series = asyncio.run(appeears_client.get_cached_appeears_series(7.87, 80.77))
+    assert series == l2_payload
+    assert fake_redis[cache_key] == l2_payload

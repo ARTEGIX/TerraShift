@@ -43,6 +43,14 @@ class Settings(BaseSettings):
             return f"{base}/lookup_db?retryWrites=true&w=majority"
         return ""
 
+    def resolved_general_uri(self) -> str:
+        if self.general_mongo_uri and "<username>" not in self.general_mongo_uri and not self.general_mongo_uri.startswith("/"):
+            return self.general_mongo_uri
+        if self.atlas_mongo_uri and "<username>" not in self.atlas_mongo_uri:
+            base = self.atlas_mongo_uri.rstrip("/")
+            return f"{base}/general_db?retryWrites=true&w=majority"
+        return ""
+
 
 @lru_cache
 def get_settings() -> Settings:
