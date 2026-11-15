@@ -101,7 +101,7 @@ export default function FarmsPage() {
       <ul className="mt-6 space-y-4">
         {farms?.map((farm) => {
           const past = analyses.filter((a) => a.farm_id === farm._id);
-          const reportsCount = farm.reports_count ?? past.length;
+const reportsCount = Math.max(farm.reports_count ?? 0, past.length);
           const projectsCount = farm.projects_count ?? 0;
           return (
             <li key={farm._id} className="card">
