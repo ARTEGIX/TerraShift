@@ -341,8 +341,9 @@ async def fetch_fused_climate(lat: float, lon: float) -> FusedClimateCube:
             if has_appeears:
                 cube.matrix[:, COL_SMAP_MOISTURE] = smap_pct
                 cube.matrix[:, COL_NDVI] = ndvi
+                if isinstance(appeears_data.get("ecostress_esi"), list):
+                    cube.extra_series = {**(cube.extra_series or {}), "ecostress_esi": appeears_data["ecostress_esi"]}
                 cube.source = "nasa_power+appeears"
-                await cache.set_json(key, cube.to_cache_dict(), ttl_seconds=get_settings().cache_ttl_seconds)
         return cube
 
     start_year, end_year = _year_window_36m()
