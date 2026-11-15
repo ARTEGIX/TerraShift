@@ -154,7 +154,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const lat = Number(req.body?.lat);
     const lon = Number(req.body?.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       throw HttpError.badRequest("Valid lat and lon are required");
     }
     void prefetchSatellite(lat, lon);
