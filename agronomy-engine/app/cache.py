@@ -43,6 +43,13 @@ async def set_json(key: str, value: Any, ttl_seconds: int | None = None) -> None
         log.warning("Redis cache set failed (%s): %s", key, exc)
 
 
+async def delete_key(key: str) -> None:
+    try:
+        await get_client().delete(key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Redis cache delete failed (%s): %s", key, exc)
+
+
 async def ping() -> bool:
     try:
         return bool(await get_client().ping())

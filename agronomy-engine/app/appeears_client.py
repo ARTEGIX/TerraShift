@@ -38,6 +38,7 @@ ECO_LAYER = "ESI"
 SMAP_PRODUCT = "SPL4SMGP.008"
 SMAP_LAYER = "Geophysical_Data_sm_rootzone_pctl"
 APPEEARS_CACHE_TTL_SECONDS = 604_800  # 7 days
+APPEEARS_PENDING_TTL_SECONDS = 86_400  # 24 hours
 
 _inflight_keys: set[str] = set()
 _background_tasks: set[asyncio.Task[Any]] = set()
@@ -68,6 +69,11 @@ async def _get_appeears_token(client: httpx.AsyncClient, base: str) -> str:
 def appeears_cache_key(lat: float, lon: float) -> tuple[float, float, str]:
     rlat, rlon = round(float(lat), 2), round(float(lon), 2)
     return rlat, rlon, f"appeears:grid:{rlat:.2f}:{rlon:.2f}"
+
+
+def appeears_pending_key(lat: float, lon: float) -> tuple[float, float, str]:
+    rlat, rlon = round(float(lat), 2), round(float(lon), 2)
+    return rlat, rlon, f"appeears:pending:{rlat:.2f}:{rlon:.2f}"
 
 
 def target_36_months(today: date | None = None) -> list[str]:
@@ -142,7 +148,7 @@ def _aggregate_csv_column(
             continue
         try:
             val = float(raw_val)
-            if column_substring in {MODIS_LAYER, HLS_LAYER}:
+            if column_substring in {MODIS_LAYER, HLS_LAYER} and 1.5 < val <= 10_000.0:
                 val *= 0.0001
         except ValueError:
             continue
@@ -204,104 +210,191 @@ def aggregate_appeears_csvs(
     }
 
 
+async def _auth_headers(client: httpx.AsyncClient, base: str, force_refresh: bool = False) -> dict[str, str]:
+    """Return Bearer auth headers, optionally clearing a stale cached login token."""
+    global _cached_login_token
+    if force_refresh:
+        _cached_login_token = ""
+    token = await _get_appeears_token(client, base)
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _download_and_cache_bundle(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: dict[str, str],
+    task_id: str,
+    cache_key: str,
+    pending_key: str,
+    months: list[str],
+) -> dict[str, Any] | None:
+    """Download completed AppEEARS CSV bundle, aggregate, cache in Redis, and clear pending key."""
+    settings = get_settings()
+    bundle_resp = await client.get(f"{base}/bundle/{task_id}", headers=headers)
+    log.info("NASA AppEEARS GET /bundle/%s: status=%d", task_id, bundle_resp.status_code)
+    bundle_resp.raise_for_status()
+    files = bundle_resp.json().get("files", [])
+
+    modis_csv: str | None = None
+    hls_csv: str | None = None
+    eco_csv: str | None = None
+    smap_csv: str | None = None
+    for f in files:
+        fname = str(f.get("file_name", ""))
+        if not fname.endswith(".csv"):
+            continue
+        file_id = f["file_id"]
+        t_dl = time.perf_counter()
+        dl = await client.get(f"{base}/bundle/{task_id}/{file_id}", headers=headers)
+        log.info(
+            "NASA AppEEARS CSV download: file=%s status=%d elapsed=%.1fms",
+            fname,
+            dl.status_code,
+            (time.perf_counter() - t_dl) * 1000.0,
+        )
+        dl.raise_for_status()
+        norm_name = fname.replace("-", "_")
+        if "HLSS30" in norm_name:
+            hls_csv = dl.text
+        elif "MOD13Q1" in norm_name:
+            modis_csv = dl.text
+        elif "ECO_L4T_ESI" in norm_name:
+            eco_csv = dl.text
+        elif "SPL4SMGP" in norm_name:
+            smap_csv = dl.text
+
+    await cache.delete_key(pending_key)
+    aggregated = aggregate_appeears_csvs(modis_csv, smap_csv, months, hls_csv=hls_csv, eco_csv=eco_csv)
+    if aggregated is None:
+        return None
+
+    await cache.set_json(
+        cache_key,
+        aggregated,
+        ttl_seconds=max(settings.cache_ttl_seconds, APPEEARS_CACHE_TTL_SECONDS),
+    )
+    log.info("Cached AppEEARS satellite series in Redis under %s", cache_key)
+    return aggregated
+
+
 async def prefetch_appeears_point(
     lat: float,
     lon: float,
-    poll_interval_s: float = 5.0,
-    timeout_s: float = 300.0,
+    poll_interval_s: float = 30.0,
+    timeout_s: float = 3600.0,
 ) -> dict[str, Any] | None:
-    """Submit an AppEEARS point task, poll until completion, and cache in Redis."""
+    """Submit (or resume) an AppEEARS point task, poll until completion, and cache in Redis."""
     settings = get_settings()
     if not _has_credentials():
         log.debug("AppEEARS credentials not configured; skipping AppEEARS fetch.")
         return None
 
     rlat, rlon, key = appeears_cache_key(lat, lon)
+    _, _, pending_key = appeears_pending_key(rlat, rlon)
+
+    existing = await cache.get_json(key)
+    if existing and ("smap_moisture_pct" in existing or "ndvi" in existing):
+        return existing
+
     months = target_36_months()
     start_year = int(months[0][:4])
     end_year = int(months[-1][:4])
 
     base = settings.appeears_base_url.rstrip("/")
-    payload = build_point_task_payload(rlat, rlon, start_year, end_year)
+    pending = await cache.get_json(pending_key)
+    task_id = str(pending.get("task_id")) if isinstance(pending, dict) and pending.get("task_id") else None
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        token = await _get_appeears_token(client, base)
-        headers = {"Authorization": f"Bearer {token}"}
-        t0 = time.perf_counter()
-        log.info("Calling NASA AppEEARS API: POST %s/task lat=%.2f lon=%.2f", base, rlat, rlon)
-        submit_resp = await client.post(f"{base}/task", json=payload, headers=headers)
-        if submit_resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
-            global _cached_login_token
-            _cached_login_token = ""
-            token = await _get_appeears_token(client, base)
-            headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        headers = await _auth_headers(client, base)
+
+        if not task_id:
+            payload = build_point_task_payload(rlat, rlon, start_year, end_year)
+            t0 = time.perf_counter()
+            log.info("Calling NASA AppEEARS API: POST %s/task lat=%.2f lon=%.2f", base, rlat, rlon)
             submit_resp = await client.post(f"{base}/task", json=payload, headers=headers)
-        log.info("NASA AppEEARS POST /task response: status=%d elapsed=%.1fms", submit_resp.status_code, (time.perf_counter() - t0) * 1000.0)
-        submit_resp.raise_for_status()
-        task_id = submit_resp.json()["task_id"]
-        log.info("AppEEARS task submitted for %s: task_id=%s", key, task_id)
+            if submit_resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
+                headers = await _auth_headers(client, base, force_refresh=True)
+                submit_resp = await client.post(f"{base}/task", json=payload, headers=headers)
+            log.info(
+                "NASA AppEEARS POST /task response: status=%d elapsed=%.1fms",
+                submit_resp.status_code,
+                (time.perf_counter() - t0) * 1000.0,
+            )
+            submit_resp.raise_for_status()
+            task_id = str(submit_resp.json()["task_id"])
+            await cache.set_json(
+                pending_key,
+                {"task_id": task_id, "months": months},
+                ttl_seconds=APPEEARS_PENDING_TTL_SECONDS,
+            )
+            log.info("AppEEARS task submitted for %s: task_id=%s", key, task_id)
+        else:
+            log.info("Resuming pending AppEEARS task for %s: task_id=%s", key, task_id)
 
         elapsed = 0.0
         while elapsed < timeout_s:
             status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
+            if status_resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
+                headers = await _auth_headers(client, base, force_refresh=True)
+                status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
+            if status_resp.status_code == 404:
+                await cache.delete_key(pending_key)
+                raise RuntimeError(f"AppEEARS task {task_id} no longer exists (404)")
             status_resp.raise_for_status()
             status = status_resp.json().get("status", "")
             log.info("NASA AppEEARS GET /task/%s: status=%s", task_id, status)
             if status == "done":
                 break
             if status in {"error", "expired"}:
+                await cache.delete_key(pending_key)
                 raise RuntimeError(f"AppEEARS task {task_id} failed with status={status}")
             await asyncio.sleep(poll_interval_s)
             elapsed += poll_interval_s
         else:
-            raise TimeoutError(f"AppEEARS task {task_id} timed out after {timeout_s}s")
+            raise TimeoutError(f"AppEEARS task {task_id} timed out after {timeout_s}s (kept pending in Redis)")
 
-        bundle_resp = await client.get(f"{base}/bundle/{task_id}", headers=headers)
-        log.info("NASA AppEEARS GET /bundle/%s: status=%d", task_id, bundle_resp.status_code)
-        bundle_resp.raise_for_status()
-        files = bundle_resp.json().get("files", [])
-
-        modis_csv: str | None = None
-        hls_csv: str | None = None
-        eco_csv: str | None = None
-        smap_csv: str | None = None
-        for f in files:
-            fname = str(f.get("file_name", ""))
-            if not fname.endswith(".csv"):
-                continue
-            file_id = f["file_id"]
-            t_dl = time.perf_counter()
-            dl = await client.get(f"{base}/bundle/{task_id}/{file_id}", headers=headers)
-            log.info("NASA AppEEARS CSV download: file=%s status=%d elapsed=%.1fms", fname, dl.status_code, (time.perf_counter() - t_dl) * 1000.0)
-            dl.raise_for_status()
-            if "HLSS30" in fname:
-                hls_csv = dl.text
-            elif "MOD13Q1" in fname:
-                modis_csv = dl.text
-            elif "ECO_L4T_ESI" in fname:
-                eco_csv = dl.text
-            elif "SPL4SMGP" in fname:
-                smap_csv = dl.text
-
-    aggregated = aggregate_appeears_csvs(modis_csv, smap_csv, months, hls_csv=hls_csv, eco_csv=eco_csv)
-    if aggregated is None:
-        return None
-
-    await cache.set_json(
-        key,
-        aggregated,
-        ttl_seconds=max(settings.cache_ttl_seconds, APPEEARS_CACHE_TTL_SECONDS),
-    )
-    log.info("Cached AppEEARS satellite series in Redis under %s", key)
-    return aggregated
+        return await _download_and_cache_bundle(client, base, headers, task_id, key, pending_key, months)
 
 
 async def get_cached_appeears_series(lat: float, lon: float) -> dict[str, Any] | None:
-    """Read pre-fetched AppEEARS SMAP + MODIS series from Redis without blocking."""
-    _, _, key = appeears_cache_key(lat, lon)
+    """Read pre-fetched AppEEARS series from Redis, or finalize a completed pending task."""
+    rlat, rlon, key = appeears_cache_key(lat, lon)
     payload = await cache.get_json(key)
     if payload and ("smap_moisture_pct" in payload or "ndvi" in payload):
         return payload
+
+    if not _has_credentials():
+        return None
+
+    _, _, pending_key = appeears_pending_key(rlat, rlon)
+    pending = await cache.get_json(pending_key)
+    if not isinstance(pending, dict) or not pending.get("task_id"):
+        return None
+
+    task_id = str(pending["task_id"])
+    months = pending.get("months") if isinstance(pending.get("months"), list) else target_36_months()
+    settings = get_settings()
+    base = settings.appeears_base_url.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            headers = await _auth_headers(client, base)
+            status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
+            if status_resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
+                headers = await _auth_headers(client, base, force_refresh=True)
+                status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
+            if status_resp.status_code in {404, 410}:
+                await cache.delete_key(pending_key)
+                return None
+            status_resp.raise_for_status()
+            status = status_resp.json().get("status", "")
+            if status == "done":
+                log.info("Pending AppEEARS task %s is done; downloading bundle now", task_id)
+                return await _download_and_cache_bundle(client, base, headers, task_id, key, pending_key, months)
+            if status in {"error", "expired"}:
+                await cache.delete_key(pending_key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Quick status check failed for pending AppEEARS task %s: %r", task_id, exc)
     return None
 
 

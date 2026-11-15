@@ -331,3 +331,97 @@ def test_project_recalculate_endpoint():
         assert "nitrogen_balance_kg_ha" in data["totals"]
 
         assert "warnings" in data
+
+
+def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app import appeears_client, cache
+
+    fake_redis: dict[str, object] = {}
+
+    async def fake_get(k: str):
+        return fake_redis.get(k)
+
+    async def fake_set(k: str, v: object, ttl_seconds: int | None = None):
+        fake_redis[k] = v
+
+    async def fake_del(k: str):
+        fake_redis.pop(k, None)
+
+    monkeypatch.setattr(cache, "get_json", fake_get)
+    monkeypatch.setattr(cache, "set_json", fake_set)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
+    monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
+
+    months = appeears_client.target_36_months()
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n" + "\n".join(
+        f"id,8.31,80.40,{m}-01,0.55" for m in months
+    )
+    eco_csv = "ID,Latitude,Longitude,Date,ECO_L4T_ESI_002_ESI\n" + "\n".join(
+        f"id,8.31,80.40,{m}-01,0.72" for m in months
+    )
+    post_calls = 0
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload=None, text: str = ""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, **_kwargs):
+            nonlocal post_calls
+            post_calls += 1
+            return FakeResp(200, {"task_id": "task-123"})
+
+        async def get(self, url, **_kwargs):
+            if url.endswith("/task/task-123"):
+                return FakeResp(200, {"status": "done"})
+            if url.endswith("/bundle/task-123"):
+                return FakeResp(
+                    200,
+                    {
+                        "files": [
+                            {"file_id": "f1", "file_name": "terrashift-MOD13Q1-061-results.csv"},
+                            {"file_id": "f2", "file_name": "terrashift-ECO-L4T-ESI-002-results.csv"},
+                        ]
+                    },
+                )
+            if url.endswith("/bundle/task-123/f1"):
+                return FakeResp(200, text=modis_csv)
+            if url.endswith("/bundle/task-123/f2"):
+                return FakeResp(200, text=eco_csv)
+            return FakeResp(404)
+
+    monkeypatch.setattr(appeears_client.httpx, "AsyncClient", FakeClient)
+
+    # Pre-populate pending task in Redis -> should NOT POST a duplicate task
+    _, _, pending_key = appeears_client.appeears_pending_key(8.31, 80.40)
+    fake_redis[pending_key] = {"task_id": "task-123", "months": months}
+
+    res = asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40))
+    assert res is not None
+    assert post_calls == 0
+    assert pending_key not in fake_redis
+    _, _, cache_key = appeears_client.appeears_cache_key(8.31, 80.40)
+    assert cache_key in fake_redis
+    assert res["ndvi"][0] == 0.55
+    assert res["ecostress_esi"][0] == 0.72
