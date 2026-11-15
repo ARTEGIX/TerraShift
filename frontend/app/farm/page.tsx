@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { analyseFarm, createFarm, fetchCrops } from "@/lib/api";
+import { analyseFarm, createFarm, fetchCrops, prefetchSatellite } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
@@ -70,6 +70,9 @@ export default function FarmWizardPage() {
     if (Object.keys(errorsFor(draft, step)).length) {
       setTried((t) => ({ ...t, [step]: true }));
       return;
+    }
+    if (step === 0 && field?.centroid) {
+      prefetchSatellite(field.centroid.lat, field.centroid.lon);
     }
     if (step < 3) return goTo((step + 1) as FieldDraft["step"]);
     await run();

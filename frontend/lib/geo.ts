@@ -13,6 +13,34 @@ export interface FieldCheck {
   centroid?: Centroid;
 }
 
+/** Area-weighted centroid matching main-service/src/utils/geo.ts (`polygonCentroid`). */
+export function polygonCentroid(polygon: Polygon): Centroid {
+  const ring = polygon.coordinates[0];
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x0, y0] = ring[i];
+    const [x1, y1] = ring[i + 1];
+    const f = x0 * y1 - x1 * y0;
+    a += f;
+    cx += (x0 + x1) * f;
+    cy += (y0 + y1) * f;
+  }
+  if (Math.abs(a) < 1e-12) {
+    const pts = ring.slice(0, -1);
+    return {
+      lon: Number((pts.reduce((s, p) => s + p[0], 0) / pts.length).toFixed(6)),
+      lat: Number((pts.reduce((s, p) => s + p[1], 0) / pts.length).toFixed(6)),
+    };
+  }
+  a *= 0.5;
+  return {
+    lon: Number((cx / (6 * a)).toFixed(6)),
+    lat: Number((cy / (6 * a)).toFixed(6)),
+  };
+}
+
 /** Validate a drawn field and measure it. main-service recomputes area/centroid itself. */
 export function checkField(polygon: Polygon): FieldCheck {
   const ring = polygon.coordinates[0];
@@ -26,11 +54,7 @@ export function checkField(polygon: Polygon): FieldCheck {
   if (ha > MAX_FIELD_HA) {
     return { ok: false, error: `That outline covers ${Math.round(ha).toLocaleString()} ha. Draw one field only.` };
   }
-  const pts = ring.slice(0, -1);
-  const centroid = {
-    lon: Number((pts.reduce((s, p) => s + p[0], 0) / pts.length).toFixed(6)),
-    lat: Number((pts.reduce((s, p) => s + p[1], 0) / pts.length).toFixed(6)),
-  };
+  const centroid = polygonCentroid(polygon);
   return { ok: true, areaHa: Math.round(ha * 100) / 100, centroid };
 }
 

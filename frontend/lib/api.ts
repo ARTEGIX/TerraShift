@@ -266,6 +266,28 @@ export async function deleteAnalysis(id: string): Promise<void> {
   await request<void>(`/simulation-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export function prefetchSatellite(lat: number, lon: number): void {
+  request<{ ok: boolean }>("/analyses/prefetch", {
+    method: "POST",
+    body: JSON.stringify({ lat, lon }),
+  }).catch(() => undefined);
+}
+
+export async function fetchSatelliteStatus(id: string): Promise<{
+  status: "ready" | "pending" | "not_started";
+  climate_source: string;
+}> {
+  return request(`/simulation-runs/${encodeURIComponent(id)}/satellite-status`);
+}
+
+export async function upgradeAnalysis(id: string): Promise<AnalysisRecord> {
+  return request<AnalysisRecord>(
+    `/simulation-runs/${encodeURIComponent(id)}/upgrade`,
+    { method: "POST" },
+    ANALYSIS_TIMEOUT_MS,
+  );
+}
+
 /* ------------------------------------------------------------------ projects */
 
 export interface ProjectSeasonInput {

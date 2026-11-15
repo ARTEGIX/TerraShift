@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, FolderPlus, Layers, Printer, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, FolderPlus, Layers, Printer, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,7 +11,7 @@ import PlanCharts from "@/components/strategy/PlanCharts";
 import StrategyCard, { CropSequence, PLAN_COLOR, PLAN_SHORT, SignalList, signalsFor } from "@/components/strategy/StrategyCard";
 import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { PageLoader } from "@/components/ui/Loaders";
-import { ApiError, createProject, deleteAnalysis, fetchAnalysis, fetchCrops } from "@/lib/api";
+import { ApiError, createProject, deleteAnalysis, fetchAnalysis, fetchCrops, fetchSatelliteStatus, upgradeAnalysis } from "@/lib/api";
 import { MONTHS_LONG, cleanText, prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisRecord, type CropInfo, type Priority, type SoilType, type StrategyId } from "@/lib/types";
 
@@ -39,6 +39,8 @@ export default function ResultsPage() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingReport, setDeletingReport] = useState(false);
+  const [satStatus, setSatStatus] = useState<"ready" | "pending" | "not_started" | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     setRecord(null);
@@ -56,6 +58,49 @@ export default function ResultsPage() {
         else setError((err as Error).message);
       });
   }, [id, router]);
+
+  const climateSource = record?.prediction.climate.source;
+  useEffect(() => {
+    if (!id || climateSource !== "nasa_power") {
+      setSatStatus(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const poll = () => {
+      fetchSatelliteStatus(id)
+        .then((res) => {
+          if (cancelled) return;
+          setSatStatus(res.status);
+          if (res.status === "ready" && timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+        })
+        .catch(() => undefined);
+    };
+    poll();
+    timer = setInterval(poll, 20_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [id, climateSource]);
+
+  async function handleUpgrade() {
+    if (!id || upgrading) return;
+    setUpgrading(true);
+    try {
+      const updated = await upgradeAnalysis(id);
+      setRecord(updated);
+      setSelected(updated.prediction.recommended_strategy);
+      setSatStatus(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUpgrading(false);
+    }
+  }
 
   if (error) {
     return (
@@ -208,6 +253,31 @@ export default function ResultsPage() {
         <p className="mt-4 flex items-start gap-2.5 rounded-2xl bg-amber-50 px-4 py-3 text-[15px] text-amber-900">
           <TriangleAlert className="mt-0.5 size-5 shrink-0" aria-hidden />
           NASA data couldn&apos;t be reached, so this uses modelled weather. Try again later for real data.
+        </p>
+      )}
+
+      {p.climate.source === "nasa_power" && satStatus === "ready" && (
+        <div className="no-print mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-leaf-50 px-4 py-3 text-[15px] text-leaf-900">
+          <span className="flex items-center gap-2">
+            <Sparkles className="size-4 shrink-0 text-leaf-700" aria-hidden />
+            High-res NASA satellite data (MODIS/HLS/SMAP) is ready.
+          </span>
+          <button
+            type="button"
+            onClick={handleUpgrade}
+            disabled={upgrading}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-leaf-700 px-3.5 py-1.5 text-[14px] font-semibold text-white hover:bg-leaf-800 disabled:opacity-60"
+          >
+            <RefreshCw className={`size-4 ${upgrading ? "animate-spin" : ""}`} aria-hidden />
+            {upgrading ? "Upgrading…" : "Upgrade plan"}
+          </button>
+        </div>
+      )}
+
+{p.climate.source === "nasa_power" && satStatus === "pending" && (
+        <p className="no-print mt-4 flex items-center gap-2.5 rounded-2xl bg-black/[0.04] px-4 py-3 text-[14px] text-ink-3">
+          <RefreshCw className="size-4 shrink-0 animate-spin" aria-hidden />
+          Using NASA POWER weather · High-res satellite NDVI &amp; soil moisture are processing in the background…
         </p>
       )}
 
