@@ -176,7 +176,7 @@ async def resolve_region_metadata(lat: float, lon: float) -> dict[str, Any]:
 
     # 1. Primary: BigDataCloud Free Reverse Geocode API (no API key required)
     try:
-        async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=min(2.5, settings.external_timeout_seconds)) as client:
             resp = await client.get(
                 settings.reverse_geocode_base_url,
                 params={"latitude": rlat, "longitude": rlon, "localityLanguage": "en"},
@@ -204,7 +204,7 @@ async def resolve_region_metadata(lat: float, lon: float) -> dict[str, Any]:
     # 2. Secondary: OpenStreetMap Nominatim Reverse Geocode API (no API key required)
     try:
         async with httpx.AsyncClient(
-            timeout=settings.external_timeout_seconds,
+            timeout=min(2.5, settings.external_timeout_seconds),
             headers={"User-Agent": "TerraShift-Agronomy-Engine/0.2 (open-source research)"},
         ) as client:
             resp = await client.get(
@@ -249,50 +249,52 @@ async def fetch_external_country_ag_stats(country_iso2: str) -> dict[str, Any]:
     revenue_mult_by_crop: dict[str, float] = {}
     sources_used: list[str] = []
 
-    # 1. World Bank Open Data API — PPP conversion factor / price level ratio (Free, no key)
+    # 1. World Bank Open Data API & 2. FAOSTAT Public API (run in parallel with tight 3.5s timeout)
     if iso2 != "UN" and len(iso2) == 2:
-        try:
-            wb_url = f"{settings.worldbank_base_url}/country/{iso2.lower()}/indicator/PA.NUS.PPPC.RF"
-            async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
-                resp = await client.get(wb_url, params={"format": "json", "per_page": 5})
-                resp.raise_for_status()
-                payload = resp.json()
-                if isinstance(payload, list) and len(payload) >= 2 and isinstance(payload[1], list):
-                    for row in payload[1]:
-                        val = row.get("value")
-                        if val is not None and float(val) > 0:
-                            # Convert price level ratio (US=1.0) into smallholder vs mechanized scaling (0.75 .. 2.25)
-                            ppp_factor = round(float(np.clip(0.65 + 1.45 * float(val), 0.75, 2.25)), 3)
-                            sources_used.append("worldbank_ppp")
-                            break
-        except Exception as exc:  # noqa: BLE001
-            log.info("World Bank PPP fetch skipped for %s: %r", iso2, exc)
-
-    # 2. FAOSTAT Public API — Area Harvested (QCL) & Producer Prices (PP)
-    if iso2 != "UN" and len(iso2) == 2:
-        try:
-            async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
-                resp = await client.get(
-                    f"{settings.faostat_base_url}/QCL",
-                    params={"area_cs": "ISO2", "area": iso2, "year": "2022,2023"},
-                )
-                if resp.status_code == 200:
-                    rows = (resp.json() or {}).get("data") or []
-                    for r in rows:
-                        item_name = str(r.get("Item") or "").lower()
-                        elem_name = str(r.get("Element") or "").lower()
-                        val = r.get("Value")
-                        if val is None:
-                            continue
-                        for cid, kw_tuple in FAO_CROP_KEYWORDS.items():
-                            if any(kw in item_name for kw in kw_tuple):
-                                if "area harvested" in elem_name:
-                                    harvested_area_ha[cid] = max(harvested_area_ha.get(cid, 0.0), float(val))
+        async def _fetch_wb() -> None:
+            nonlocal ppp_factor
+            try:
+                wb_url = f"{settings.worldbank_base_url}/country/{iso2.lower()}/indicator/PA.NUS.PPPC.RF"
+                async with httpx.AsyncClient(timeout=3.5) as client:
+                    resp = await client.get(wb_url, params={"format": "json", "per_page": 5})
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    if isinstance(payload, list) and len(payload) >= 2 and isinstance(payload[1], list):
+                        for row in payload[1]:
+                            val = row.get("value")
+                            if val is not None and float(val) > 0:
+                                ppp_factor = round(float(np.clip(0.65 + 1.45 * float(val), 0.75, 2.25)), 3)
+                                sources_used.append("worldbank_ppp")
                                 break
-                    if harvested_area_ha:
-                        sources_used.append("faostat_qcl")
-        except Exception as exc:  # noqa: BLE001
-            log.info("FAOSTAT QCL fetch skipped for %s: %r", iso2, exc)
+            except Exception as exc:  # noqa: BLE001
+                log.info("World Bank PPP fetch skipped for %s: %r", iso2, exc)
+
+        async def _fetch_fao() -> None:
+            try:
+                async with httpx.AsyncClient(timeout=3.5) as client:
+                    resp = await client.get(
+                        f"{settings.faostat_base_url}/QCL",
+                        params={"area_cs": "ISO2", "area": iso2, "year": "2022"},
+                    )
+                    if resp.status_code == 200:
+                        rows = (resp.json() or {}).get("data") or []
+                        for r in rows:
+                            item_name = str(r.get("Item") or "").lower()
+                            elem_name = str(r.get("Element") or "").lower()
+                            val = r.get("Value")
+                            if val is None:
+                                continue
+                            for cid, kw_tuple in FAO_CROP_KEYWORDS.items():
+                                if any(kw in item_name for kw in kw_tuple):
+                                    if "area harvested" in elem_name:
+                                        harvested_area_ha[cid] = max(harvested_area_ha.get(cid, 0.0), float(val))
+                                    break
+                        if harvested_area_ha:
+                            sources_used.append("faostat_qcl")
+            except Exception as exc:  # noqa: BLE001
+                log.info("FAOSTAT QCL fetch skipped for %s: %r", iso2, exc)
+
+        await asyncio.gather(_fetch_wb(), _fetch_fao())
 
     result = {
         "country_iso2": iso2,
@@ -531,26 +533,31 @@ async def ensure_region_in_lookup_db(
             "cached": True,
         }
 
-    # Fetch climate cube, SoilGrids, terrain, and external FAOSTAT/World Bank stats in parallel
-    try:
-        cube, soilgrids, terrain, ag_stats = await asyncio.gather(
-            fetch_fused_climate(lat, lon),
-            fetch_soilgrids_profile(lat, lon),
-            fetch_terrain_profile(lat, lon, polygon_ring),
+    async def _timed(coro: Any, timeout_s: float, default_val: Any) -> Any:
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_s)
+        except Exception as exc:  # noqa: BLE001
+            log.info("Regional sub-fetch timed out or degraded (%r) — using fallback.", exc)
+            return default_val
+
+    # Fetch climate cube, SoilGrids, terrain, and external FAOSTAT/World Bank stats in parallel with bounded timeouts
+    cube, soilgrids, terrain, ag_stats = await asyncio.gather(
+        _timed(fetch_fused_climate(lat, lon), 6.0, build_fallback_cube(lat, lon)),
+        _timed(fetch_soilgrids_profile(lat, lon), 4.0, None),
+        _timed(fetch_terrain_profile(lat, lon, polygon_ring), 3.5, None),
+        _timed(
             fetch_external_country_ag_stats(region_meta.get("country_iso2", "UN")),
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Parallel regional ingestion degraded for %s (%r) — using deterministic fallback.", region_id, exc)
-        cube = build_fallback_cube(lat, lon)
-        soilgrids = None
-        terrain = None
-        ag_stats = {"country_iso2": region_meta.get("country_iso2", "UN"), "ppp_factor": 1.0, "source": "fallback"}
+            4.0,
+            {"country_iso2": region_meta.get("country_iso2", "UN"), "ppp_factor": 1.0, "source": "fallback"},
+        ),
+    )
 
     soil_doc = build_regional_soil_profile(region_id, region_meta["name"], soilgrids, terrain, store=store)
     regional_crops = build_regional_crops_catalog(region_meta, ag_stats, cube, soil_doc, store=store)
     region_doc = build_regional_saturation_profile(region_meta, ag_stats, cube, soil_doc, regional_crops)
 
-    store.upsert_region_bundle(
+    await asyncio.to_thread(
+        store.upsert_region_bundle,
         region_doc=region_doc,
         soil_doc=soil_doc,
         regional_crops=regional_crops,

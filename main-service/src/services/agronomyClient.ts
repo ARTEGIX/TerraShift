@@ -57,11 +57,15 @@ export async function ensureRegion(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lat, lon, ...(polygon ? { polygon } : {}) }),
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(env.AGRONOMY_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`agronomy-engine /regions/ensure returned ${res.status}`);
+      return null;
+    }
     return (await res.json()) as EnsureRegionResponse;
-  } catch {
+  } catch (err) {
+    console.warn("agronomy-engine /regions/ensure failed:", (err as Error).message);
     return null;
   }
 }
