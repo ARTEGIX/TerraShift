@@ -34,6 +34,7 @@ from app.config import get_settings
 log = logging.getLogger(__name__)
 
 PARAMETERS = ("T2M_MAX", "PRECTOTCORR", "ALLSKY_SFC_SW_DWN", "EVPTRNS")
+SOIL_PARAMETERS = ("GWETROOT", "GWETTOP")
 EXTRA_PARAMETERS = ("T2M_MIN", "RH2M")
 FILL_VALUE = -999.0
 LATENT_HEAT_MJ_PER_KG = 2.45
@@ -130,18 +131,23 @@ def _harmonize_smap_and_ndvi(
     et_mm: np.ndarray,
     t2m_max_c: np.ndarray,
     water_holding_mm_m: float = 140.0,
+    smap_override_pct: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Synthesize physically consistent SMAP root-zone soil moisture (%) and MODIS/Sentinel-2 NDVI."""
+    """Use real NASA GWETROOT when available (or synthesize SMAP moisture) and derive interim NDVI."""
     n = precip_mm.size
-    smap_pct = np.zeros(n, dtype=np.float64)
     ndvi = np.zeros(n, dtype=np.float64)
 
-    storage = 0.55 * water_holding_mm_m
-    for i in range(n):
-        net_flux = 0.78 * precip_mm[i] - 0.62 * et_mm[i]
-        storage = float(np.clip(storage * 0.82 + net_flux * 0.38, 0.12 * water_holding_mm_m, water_holding_mm_m))
-        smap_pct[i] = np.clip(100.0 * (storage / water_holding_mm_m), 10.0, 96.0)
+    if smap_override_pct is not None:
+        smap_pct = np.clip(smap_override_pct, 0.0, 100.0)
+    else:
+        smap_pct = np.zeros(n, dtype=np.float64)
+        storage = 0.55 * water_holding_mm_m
+        for i in range(n):
+            net_flux = 0.78 * precip_mm[i] - 0.62 * et_mm[i]
+            storage = float(np.clip(storage * 0.82 + net_flux * 0.38, 0.12 * water_holding_mm_m, water_holding_mm_m))
+            smap_pct[i] = np.clip(100.0 * (storage / water_holding_mm_m), 10.0, 96.0)
 
+    for i in range(n):
         # Vegetation greenness lags root-zone moisture slightly and drops under extreme heat
         lag_moisture = smap_pct[i] if i == 0 else 0.65 * smap_pct[i] + 0.35 * smap_pct[i - 1]
         heat_stress = max(0.0, float(t2m_max_c[i]) - 34.0) * 0.025
@@ -233,6 +239,30 @@ def build_cube_from_power(
                 extra_series[out_key] = _interpolate_series(series[p], ym_keys, p).tolist()
             except ValueError:
                 pass
+
+    gwetroot_pct: np.ndarray | None = None
+    if "GWETROOT" in series:
+        try:
+            gwetroot_pct = np.clip(
+                _interpolate_series(series["GWETROOT"], ym_keys, "GWETROOT") * 100.0,
+                0.0,
+                100.0,
+            )
+            extra_series["gwetroot_pct"] = gwetroot_pct.tolist()
+        except ValueError:
+            log.warning("NASA POWER GWETROOT all-NaN for %s; falling back to synthesized moisture.", key)
+
+    if "GWETTOP" in series:
+        try:
+            gwettop_pct = np.clip(
+                _interpolate_series(series["GWETTOP"], ym_keys, "GWETTOP") * 100.0,
+                0.0,
+                100.0,
+            )
+            extra_series["gwettop_pct"] = gwettop_pct.tolist()
+        except ValueError:
+            pass
+
     if appeears_override and isinstance(appeears_override.get("ecostress_esi"), list):
         extra_series["ecostress_esi"] = appeears_override["ecostress_esi"]
 
@@ -251,7 +281,7 @@ def build_cube_from_power(
     et_daily = cols["EVPTRNS"] / LATENT_HEAT_MJ_PER_KG if "mj" in et_units else cols["EVPTRNS"]
     et = np.maximum(10.0, et_daily * days_arr)
 
-    smap_pct, ndvi = _harmonize_smap_and_ndvi(precip, et, t2m)
+    smap_pct, ndvi = _harmonize_smap_and_ndvi(precip, et, t2m, smap_override_pct=gwetroot_pct)
     smap_pct, ndvi, has_appeears = _apply_appeears_override(smap_pct, ndvi, months, appeears_override)
     matrix = np.column_stack([t2m, precip, solar, et, smap_pct, ndvi]).astype(np.float64)
 
