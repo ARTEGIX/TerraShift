@@ -54,7 +54,10 @@ router.post(
       return;
     }
     // Graceful fallback if agronomy-engine container is still restarting or unreachable
-    const isMidwest = lat > 23.5;
+    const isMidwest = Math.abs(lat) >= 23.5;
+    const viableCropIds = isMidwest
+      ? ["maize", "soybean", "winter_wheat", "potato", "onion", "chickpea", "lentil", "sunflower", "crimson_clover"]
+      : ["paddy_rice", "maize", "mung_bean", "cowpea", "groundnut", "finger_millet", "sesame", "cassava", "chilli", "onion", "sunn_hemp"];
     res.json({
       region_id: isMidwest ? "region_us_midwest" : "region_lk_dryzone",
       region_name: isMidwest ? "Temperate Agro-Zone" : "Tropical Dry & Intermediate Zone",
@@ -65,8 +68,8 @@ router.post(
       oversupplied_crops: isMidwest ? ["maize"] : ["paddy_rice", "maize", "onion"],
       dominant_pest_family: "poaceae",
       bare_field_months: isMidwest ? [11, 12, 1, 2, 3] : [3, 4, 8, 9],
-      viable_crops_count: 12,
-      viable_crop_ids: [],
+      viable_crops_count: viableCropIds.length,
+      viable_crop_ids: viableCropIds,
       cached: false,
     });
   }),

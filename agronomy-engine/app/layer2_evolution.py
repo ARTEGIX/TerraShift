@@ -44,9 +44,9 @@ from app.memory_store import (
 N_SEASONS = 3
 UREA_N_COST_USD_PER_KG = 1.35
 LEGUME_N_CARRYOVER = 0.65
-HEAT_SENSITIVE_CROPS = {"onion", "chilli", "paddy_rice"}
-HEAT_TOLERANT_CROPS = {"sesame", "finger_millet", "cowpea", "maize", "cassava"}
-COLD_TOLERANT_CROPS = {"onion", "chickpea", "sunn_hemp"}
+HEAT_SENSITIVE_CROPS = {"onion", "chilli", "paddy_rice", "potato", "winter_wheat", "lentil", "crimson_clover"}
+HEAT_TOLERANT_CROPS = {"sesame", "finger_millet", "cowpea", "maize", "cassava", "sorghum", "sunflower"}
+COLD_TOLERANT_CROPS = {"onion", "chickpea", "sunn_hemp", "winter_wheat", "potato", "lentil", "crimson_clover"}
 
 
 def _thermal_and_radiation_multiplier(

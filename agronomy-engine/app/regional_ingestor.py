@@ -48,30 +48,66 @@ FAO_CROP_KEYWORDS: dict[str, tuple[str, ...]] = {
     "mung_bean": ("beans, dry", "mung", "green gram", "pulses"),
     "cowpea": ("cow peas", "cowpea"),
     "maize": ("maize", "corn"),
-    "finger_millet": ("millet", "sorghum"),
+    "finger_millet": ("millet",),
     "groundnut": ("groundnuts", "peanuts"),
     "sesame": ("sesame seed", "sesame"),
     "chilli": ("chillies and peppers", "peppers", "chilli"),
     "onion": ("onions and shallots", "onions"),
-    "sunn_hemp": ("hemp", "forage", "clover"),
+    "sunn_hemp": ("hemp", "forage"),
     "chickpea": ("chick peas", "chickpea"),
     "cassava": ("cassava", "manioc", "yuca"),
+    "soybean": ("soya beans", "soybeans", "soybean"),
+    "winter_wheat": ("wheat",),
+    "potato": ("potatoes", "potato"),
+    "sorghum": ("sorghum",),
+    "sunflower": ("sunflower seed", "sunflower"),
+    "lentil": ("lentils", "lentil"),
+    "crimson_clover": ("clover", "alfalfa", "vetch"),
 }
 
 # Thermal limits (min_temp_c, max_temp_c) for agro-climatic crop viability filtering
 CROP_THERMAL_LIMITS: dict[str, tuple[float, float]] = {
-    "paddy_rice": (10.0, 42.0),
+    "paddy_rice": (14.0, 42.0),
     "mung_bean": (12.0, 42.0),
     "cowpea": (12.0, 44.0),
     "maize": (5.0, 42.0),
-    "finger_millet": (8.0, 44.0),
-    "groundnut": (10.0, 42.0),
-    "sesame": (12.0, 45.0),
+    "finger_millet": (10.0, 44.0),
+    "groundnut": (12.0, 42.0),
+    "sesame": (14.0, 45.0),
     "chilli": (10.0, 40.0),
-    "onion": (2.0, 38.0),
-    "sunn_hemp": (8.0, 43.0),
-    "chickpea": (2.0, 38.0),
-    "cassava": (14.0, 44.0),
+    "onion": (0.0, 38.0),
+    "sunn_hemp": (10.0, 43.0),
+    "chickpea": (0.0, 38.0),
+    "cassava": (15.0, 44.0),
+    "soybean": (4.0, 40.0),
+    "winter_wheat": (-8.0, 34.0),
+    "potato": (2.0, 32.0),
+    "sorghum": (10.0, 45.0),
+    "sunflower": (4.0, 40.0),
+    "lentil": (-2.0, 35.0),
+    "crimson_clover": (-5.0, 34.0),
+}
+
+# Canonical regional crop sets by Agro-Ecological Zone
+AEZ_VIABLE_CROPS: dict[str, set[str]] = {
+    "temperate": {
+        "maize", "soybean", "winter_wheat", "potato", "sunflower", "lentil", "chickpea", "onion", "crimson_clover"
+    },
+    "subtropical": {
+        "maize", "soybean", "winter_wheat", "chickpea", "groundnut", "chilli", "onion", "sunflower", "mung_bean", "sunn_hemp"
+    },
+    "arid_semiarid": {
+        "sorghum", "finger_millet", "sesame", "chickpea", "cowpea", "groundnut", "sunflower", "onion", "sunn_hemp"
+    },
+    "tropical_highland": {
+        "potato", "maize", "onion", "chilli", "mung_bean", "cowpea", "lentil", "chickpea", "crimson_clover"
+    },
+    "tropical_humid": {
+        "paddy_rice", "cassava", "maize", "mung_bean", "cowpea", "groundnut", "chilli", "sunn_hemp"
+    },
+    "tropical_wet_dry": {
+        "paddy_rice", "maize", "mung_bean", "cowpea", "groundnut", "finger_millet", "sesame", "chilli", "onion", "sunn_hemp"
+    },
 }
 
 # Country / Agro-Zone baseline PPP multipliers (1.0 = developing smallholder baseline, >1.8 = high-income mechanized)
@@ -105,9 +141,10 @@ COUNTRY_PPP_FALLBACK: dict[str, float] = {
 AEZ_SATURATION_FALLBACK: dict[str, list[str]] = {
     "tropical_wet_dry": ["paddy_rice", "maize", "onion"],
     "tropical_humid": ["paddy_rice", "cassava", "maize"],
-    "arid_semiarid": ["finger_millet", "sesame", "groundnut"],
-    "subtropical": ["maize", "chilli", "onion"],
-    "temperate": ["maize", "onion", "chickpea"],
+    "tropical_highland": ["potato", "maize", "onion"],
+    "arid_semiarid": ["sorghum", "finger_millet", "sesame"],
+    "subtropical": ["maize", "winter_wheat", "soybean"],
+    "temperate": ["maize", "soybean", "winter_wheat"],
 }
 
 
@@ -115,15 +152,17 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
 
 
-def classify_agro_zone(lat: float, mean_annual_precip_mm: float = 1100.0) -> str:
+def classify_agro_zone(lat: float, mean_annual_precip_mm: float = 1100.0, mean_tmax_c: float = 30.0) -> str:
     abs_lat = abs(float(lat))
-    if abs_lat > 32.0:
+    if abs_lat > 31.0 or mean_tmax_c < 20.0:
         return "temperate"
     if abs_lat > 23.5:
-        return "subtropical" if mean_annual_precip_mm >= 650.0 else "arid_semiarid"
-    if mean_annual_precip_mm < 600.0:
+        return "subtropical" if mean_annual_precip_mm >= 600.0 else "arid_semiarid"
+    if mean_tmax_c < 27.5:
+        return "tropical_highland"
+    if mean_annual_precip_mm < 650.0:
         return "arid_semiarid"
-    if mean_annual_precip_mm > 1750.0:
+    if mean_annual_precip_mm > 1700.0:
         return "tropical_humid"
     return "tropical_wet_dry"
 
@@ -356,7 +395,7 @@ def build_regional_crops_catalog(
     peak_tmax = float(np.max(mat[:, COL_T2M_MAX]))
     mean_et_monthly = float(np.mean(mat[:, COL_ET]))
     annual_precip_mm = float(np.sum(mat[:, COL_PRECIP]) / max(1.0, mat.shape[0] / 12.0))
-    agro_zone = classify_agro_zone(cube.lat, annual_precip_mm)
+    agro_zone = classify_agro_zone(cube.lat, annual_precip_mm, mean_tmax)
     raw_tmin = (cube.extra_series or {}).get("t2m_min_c")
     min_tmin = float(np.min(raw_tmin)) if isinstance(raw_tmin, list) and raw_tmin else (mean_tmax - 11.0)
     harvested_map: dict[str, float] = ag_stats.get("harvested_area_ha") or {}
@@ -365,19 +404,28 @@ def build_regional_crops_catalog(
     et_demand_mult = float(np.clip(mean_et_monthly / 135.0, 0.78, 1.28))
     soil_ph = soil_doc.get("ph")
 
-    # Obligate tropical crops excluded in temperate zones unless FAOSTAT confirms production
-    tropical_only = {"cassava", "paddy_rice", "finger_millet", "sesame"}
+    zone_allowed = set(AEZ_VIABLE_CROPS.get(agro_zone, AEZ_VIABLE_CROPS["tropical_wet_dry"]))
+    # Also include top FAOSTAT-confirmed crops for this country if thermally compatible
+    if harvested_map:
+        total_harv = sum(harvested_map.values()) or 1.0
+        for cid, harv_ha in harvested_map.items():
+            if (harv_ha / total_harv) >= 0.04 or harv_ha >= 35_000.0:
+                zone_allowed.add(cid)
+
+    candidate_pool = getattr(store, "all_candidate_crops_by_id", None) or store.crops_by_id
 
     regional_crops: list[dict[str, Any]] = []
-    for cid in store.crop_ids:
-        base = store.crops_by_id[cid]
+    for cid, base in candidate_pool.items():
         tmin_limit, tmax_limit = CROP_THERMAL_LIMITS.get(cid, (5.0, 42.0))
 
-        # Check thermal, frost & agro-zone viability in this region
-        viable = bool(min_tmin >= (tmin_limit - 2.0) and peak_tmax <= (tmax_limit + 3.0))
-        if agro_zone == "temperate" and cid in tropical_only and harvested_map.get(cid, 0.0) < 25_000.0:
+        # Check agro-zone membership + thermal bounds
+        thermally_ok = bool(min_tmin >= (tmin_limit - 3.0) and peak_tmax <= (tmax_limit + 4.0))
+        viable = bool(cid in zone_allowed and thermally_ok)
+        if agro_zone == "temperate" and cid in {"cassava", "paddy_rice", "finger_millet", "sesame", "sunn_hemp"}:
             viable = False
-        if agro_zone == "arid_semiarid" and cid == "paddy_rice" and annual_precip_mm < 550.0:
+        if agro_zone == "arid_semiarid" and cid in {"paddy_rice", "cassava", "potato"}:
+            viable = False
+        if agro_zone == "tropical_highland" and cid in {"paddy_rice", "cassava", "sesame"}:
             viable = False
 
         # Adjust water demand by local evaporative demand (ET)
@@ -387,7 +435,7 @@ def build_regional_crops_catalog(
         climate_rev_bonus = 1.0
         if cid in ("paddy_rice", "cassava", "mung_bean", "cowpea") and min_tmin > 16.0:
             climate_rev_bonus = 1.06
-        elif cid in ("maize", "chickpea", "onion") and 8.0 <= min_tmin <= 20.0:
+        elif cid in ("maize", "chickpea", "onion", "soybean", "winter_wheat", "potato") and 4.0 <= min_tmin <= 20.0:
             climate_rev_bonus = 1.08
 
         if soil_ph is not None and (float(soil_ph) < 5.2 or float(soil_ph) > 8.0) and base.get("category") == "legume":

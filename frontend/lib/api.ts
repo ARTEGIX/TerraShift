@@ -176,6 +176,83 @@ export const GENERAL_CROPS_FALLBACK: CropInfo[] = [
   { id: "sunn_hemp", name: "Sunn Hemp", category: "cover_crop", water_demand_mm: 280, nitrogen_impact_kg_ha: 110, root_depth_cm: 150, growth_days: 60 },
 ];
 
+export const EXTRA_REGIONAL_CROPS: CropInfo[] = [
+  { id: "soybean", name: "Soybean", category: "legume", water_demand_mm: 500, nitrogen_impact_kg_ha: 65, root_depth_cm: 90, growth_days: 105 },
+  { id: "winter_wheat", name: "Winter Wheat", category: "cash_crop", water_demand_mm: 460, nitrogen_impact_kg_ha: -95, root_depth_cm: 110, growth_days: 130 },
+  { id: "potato", name: "Potato", category: "cash_crop", water_demand_mm: 520, nitrogen_impact_kg_ha: -105, root_depth_cm: 50, growth_days: 105 },
+  { id: "sorghum", name: "Grain Sorghum", category: "drought_tolerant", water_demand_mm: 380, nitrogen_impact_kg_ha: -65, root_depth_cm: 130, growth_days: 100 },
+  { id: "sunflower", name: "Sunflower", category: "drought_tolerant", water_demand_mm: 420, nitrogen_impact_kg_ha: -55, root_depth_cm: 140, growth_days: 95 },
+  { id: "lentil", name: "Lentil", category: "legume", water_demand_mm: 310, nitrogen_impact_kg_ha: 48, root_depth_cm: 70, growth_days: 95 },
+  { id: "crimson_clover", name: "Crimson Clover (cover crop)", category: "cover_crop", water_demand_mm: 290, nitrogen_impact_kg_ha: 95, root_depth_cm: 65, growth_days: 70 },
+];
+
+const ALL_KNOWN_CROPS_BY_ID = new Map<string, CropInfo>(
+  [...GENERAL_CROPS_FALLBACK, ...EXTRA_REGIONAL_CROPS].map((c) => [c.id, c]),
+);
+
+/** Derive regional viable crop IDs by latitude/longitude when backend returns an unfiltered global list. */
+export function inferRegionalCropIds(lat: number, lon: number): string[] {
+  const absLat = Math.abs(lat);
+  if (absLat >= 34) {
+    // Temperate (US Midwest, Europe, N. China, S. Cone, etc.)
+    return ["maize", "soybean", "winter_wheat", "potato", "onion", "chickpea", "lentil", "sunflower", "crimson_clover"];
+  }
+  if (absLat >= 23.5) {
+    // Subtropical / Mediterranean / N. India / MENA / S. Brazil
+    if (lon >= 15 && lon <= 65) {
+      // Arid / semi-arid belt
+      return ["sorghum", "finger_millet", "sesame", "chickpea", "cowpea", "lentil", "sunflower", "onion", "sunn_hemp"];
+    }
+    return ["maize", "winter_wheat", "soybean", "chickpea", "lentil", "groundnut", "onion", "chilli", "sorghum", "sunflower", "sunn_hemp"];
+  }
+  // Tropical belt (< 23.5°)
+  if (absLat <= 8 && ((lon >= 95 && lon <= 150) || (lon >= -80 && lon <= -45) || (lon >= 8 && lon <= 30))) {
+    // Equatorial humid tropics (SE Asia archipelago, Amazon, Congo basin)
+    return ["paddy_rice", "maize", "cassava", "mung_bean", "cowpea", "groundnut", "chilli", "sunn_hemp"];
+  }
+  if (lon >= 32 && lon <= 42 && lat >= -12 && lat <= 12) {
+    // East African highlands
+    return ["maize", "potato", "finger_millet", "chickpea", "lentil", "onion", "chilli", "cowpea", "crimson_clover", "sunn_hemp"];
+  }
+  // Tropical monsoon / wet-dry (Sri Lanka, S. India, W. Africa, Mainland SE Asia)
+  return ["paddy_rice", "maize", "mung_bean", "cowpea", "groundnut", "finger_millet", "sesame", "cassava", "chilli", "onion", "sunn_hemp"];
+}
+
+/** Combine API crop response with regional viable crop IDs so each agro-ecological zone shows its tailored crops. */
+export function resolveRegionalCropList(
+  apiCrops: CropInfo[],
+  viableCropIds?: string[] | null,
+  lat?: number,
+  lon?: number,
+): CropInfo[] {
+  const byId = new Map<string, CropInfo>(ALL_KNOWN_CROPS_BY_ID);
+  for (const c of apiCrops) {
+    byId.set(c.id, c);
+  }
+  const isUnfilteredDefault12 =
+    apiCrops.length === 12 &&
+    apiCrops.every((c) => GENERAL_CROPS_FALLBACK.some((g) => g.id === c.id));
+  const isViableDefault12 =
+    viableCropIds &&
+    viableCropIds.length === 12 &&
+    viableCropIds.every((id) => GENERAL_CROPS_FALLBACK.some((g) => g.id === id));
+
+  let targetIds: string[] | null = null;
+  if (viableCropIds && viableCropIds.length > 0 && !isViableDefault12) {
+    targetIds = viableCropIds;
+  } else if (!isUnfilteredDefault12 && apiCrops.length > 0) {
+    return apiCrops;
+  } else if (typeof lat === "number" && typeof lon === "number") {
+    targetIds = inferRegionalCropIds(lat, lon);
+  }
+
+  if (targetIds && targetIds.length > 0) {
+    const resolved = targetIds.map((id) => byId.get(id)).filter((c): c is CropInfo => Boolean(c));
+    if (resolved.length > 0) return resolved;
+  }
+  return apiCrops.length > 0 ? apiCrops : GENERAL_CROPS_FALLBACK;
+}
+
 /** Crop list from lookup_db (via main-service), optionally filtered to a region's viable crops. */
 export function fetchCrops(regionId?: string, forceRefresh = false): Promise<CropInfo[]> {
   const key = regionId?.trim() || "__global__";
