@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     elevation_base_url: str = "https://api.open-meteo.com/v1/elevation"
     seasonal_forecast_base_url: str = "https://seasonal-api.open-meteo.com/v1/seasonal"
+    reverse_geocode_base_url: str = "https://api.bigdatacloud.net/data/reverse-geocode-client"
+    nominatim_base_url: str = "https://nominatim.openstreetmap.org/reverse"
+    faostat_base_url: str = "https://faostatservices.fao.org/api/v1/en/data"
+    worldbank_base_url: str = "https://api.worldbank.org/v2"
     external_timeout_seconds: float = 6.0
 
     ga_population: int = 50

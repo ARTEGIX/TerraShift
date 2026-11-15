@@ -29,9 +29,24 @@ from app.layer1_regression import run_layer1_regression
 from app.layer2_evolution import _build_strategy_payload, run_layer2_evolution
 from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
+from app.regional_ingestor import (
+    build_regional_crops_catalog,
+    build_regional_saturation_profile,
+    build_regional_soil_profile,
+    ensure_region_in_lookup_db,
+    fetch_external_country_ag_stats,
+    resolve_region_metadata,
+)
 from app.soil_client import fetch_soilgrids_profile
 from app.terrain_client import fetch_terrain_profile
-from app.schemas import Centroid, PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse
+from app.schemas import (
+    Centroid,
+    PredictRequest,
+    PredictResponse,
+    ProjectRecalcRequest,
+    ProjectRecalcResponse,
+    RegionEnsureRequest,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("agronomy-engine")
@@ -80,8 +95,8 @@ async def reload_lookup() -> dict[str, Any]:
 
 
 @app.get("/crops", tags=["reference"])
-async def crops() -> list[dict[str, Any]]:
-    return list(lookup_store.crops_by_id.values())
+async def crops(region_id: str | None = None) -> list[dict[str, Any]]:
+    return lookup_store.get_crops_for_region(region_id, viable_only=False)
 
 
 @app.get("/soils", tags=["reference"])
@@ -92,6 +107,19 @@ async def soils() -> list[dict[str, Any]]:
 @app.get("/regions", tags=["reference"])
 async def regions() -> list[dict[str, Any]]:
     return list(lookup_store.regional_saturation.values())
+
+
+@app.post("/regions/ensure", tags=["reference"])
+async def ensure_region(req: RegionEnsureRequest) -> dict[str, Any]:
+    """Resolve region for `(lat, lon)`, fetch external soil/saturation/crop economics if new, and save to `lookup_db`."""
+    outer_ring = req.polygon.coordinates[0] if (req.polygon and req.polygon.coordinates) else None
+    return await ensure_region_in_lookup_db(
+        lat=req.lat,
+        lon=req.lon,
+        polygon_ring=outer_ring,
+        store=lookup_store,
+        force_refresh=req.force_refresh,
+    )
 
 
 @app.post("/prefetch", tags=["engine"])
@@ -126,6 +154,19 @@ async def predict(req: PredictRequest) -> PredictResponse:
         fetch_seasonal_forecast(req.centroid.lat, req.centroid.lon),
     )
 
+    # Ensure region-specific lookup_db entries exist if region_id is omitted or not yet populated
+    resolved_region_id = req.region_id
+    if not resolved_region_id or resolved_region_id not in lookup_store.regional_saturation:
+        region_meta = await resolve_region_metadata(req.centroid.lat, req.centroid.lon)
+        resolved_region_id = req.region_id or str(region_meta["region_id"])
+        if resolved_region_id not in lookup_store.regional_saturation:
+            ag_stats = await fetch_external_country_ag_stats(region_meta.get("country_iso2", "UN"))
+            region_meta = {**region_meta, "region_id": resolved_region_id}
+            soil_doc = build_regional_soil_profile(resolved_region_id, region_meta["name"], soilgrids, terrain, store=lookup_store)
+            regional_crops = build_regional_crops_catalog(region_meta, ag_stats, cube, soil_doc, store=lookup_store)
+            region_doc = build_regional_saturation_profile(region_meta, ag_stats, cube, soil_doc, regional_crops)
+            lookup_store.upsert_region_bundle(region_doc, soil_doc, regional_crops)
+
     # Layer 1: In-Memory Regression Engine
     t_compute = time.perf_counter()
     effective_soil_type = (
@@ -137,7 +178,7 @@ async def predict(req: PredictRequest) -> PredictResponse:
         cube=cube,
         soil_type=effective_soil_type,
         current_crop=req.current_crop,
-        region_id=req.region_id,
+        region_id=resolved_region_id,
         planting_month=req.planting_month,
         store=lookup_store,
         soilgrids=soilgrids,
@@ -231,11 +272,14 @@ async def project_recalculate(req: ProjectRecalcRequest) -> ProjectRecalcRespons
         seasonal_forecast=seasonal_forecast,
     )
 
-    # Resolve crop indices for the fixed 3-season sequence
-    seq_list = [
-        lookup_store.crop_index.get(lookup_store.resolve_crop_id(s.crop_id) or s.crop_id, 0)
-        for s in req.seasons
-    ]
+    # Resolve crop indices for the fixed 3-season sequence against the region's lookup view
+    all_crop_ids = [ lookup_store.resolve_crop_id(s.crop_id) or s.crop_id for s in req.seasons ]
+    regional_view = lookup_store.for_region(layer1.region_profile.get("_id"), ensure_crop_id=req.current_crop)
+    # If any user-selected project crop was filtered out of the regional view, fall back to full store
+    if any(cid not in regional_view.crop_index for cid in all_crop_ids):
+        regional_view = lookup_store
+
+    seq_list = [regional_view.crop_index.get(cid, 0) for cid in all_crop_ids]
     seq: tuple[int, int, int] = (seq_list[0], seq_list[1], seq_list[2])
 
     # Build season_overrides list from request
@@ -254,7 +298,7 @@ async def project_recalculate(req: ProjectRecalcRequest) -> ProjectRecalcRespons
         description="User-defined 3-season project plan with optional overrides.",
         seq=seq,
         layer1=layer1,
-        store=lookup_store,
+        store=regional_view,
         season_overrides=overrides,
     )
 

@@ -197,8 +197,12 @@ def run_layer1_regression(
     t = np.arange(n, dtype=np.float64)
     months = cube.month_numbers
 
-    soil = _enrich_soil_with_soilgrids(store.resolve_soil_profile(soil_type), soilgrids)
-    region = store.resolve_region_profile(region_id, cube.lat)
+    region = store.resolve_region_profile(region_id, cube.lat, cube.lon)
+    regional_store = store.for_region(region["_id"], ensure_crop_id=current_crop)
+    soil = _enrich_soil_with_soilgrids(
+        regional_store.resolve_soil_profile(soil_type, region_id=region["_id"]),
+        soilgrids,
+    )
     mean_vpd_kpa, frost_months = _compute_vpd_and_frost(cube)
     ls_factor = float((terrain or {}).get("ls_factor", 1.0))
     slope_pct = float((terrain or {}).get("slope_pct", 0.0))
@@ -287,7 +291,7 @@ def run_layer1_regression(
 
     # 3. Bare-field erosion risk & NDVI field vigor calibration (MODIS/HLS NDVI + crop rotation calendar)
     regional_bare = {int(m) for m in region.get("bare_field_months", [3, 4, 8, 9])}
-    crop_doc = store.crops_by_id.get(current_crop, {})
+    crop_doc = regional_store.crops_by_id.get(current_crop) or store.crops_by_id.get(current_crop, {})
     harvest_span_m = max(2, min(5, int(round(float(crop_doc.get("growth_days", 110)) / 30.0))))
     post_harvest_month = ((planting_month - 1 + harvest_span_m) % 12) + 1
 
@@ -338,10 +342,10 @@ def run_layer1_regression(
     heat_score = float(np.clip((peak_tmax - 31.0) * 11.0 + over_35 * 6.5 + vpd_penalty + frost_months * 3.0, 0.0, 100.0))
 
     # 5. Regional neighbor-farm saturation penalties
-    oversupply_mask = store.oversupplied_mask(region["_id"], cube.lat)
+    oversupply_mask = regional_store.oversupplied_mask(region["_id"], cube.lat)
     oversupply_penalty_vector = oversupply_mask * 0.22  # 22% revenue discount when regionally oversupplied
     dom_family = str(region.get("dominant_pest_family", "poaceae"))
-    dom_family_code = store.pest_family_vocab.get(dom_family, -1)
+    dom_family_code = regional_store.pest_family_vocab.get(dom_family, -1)
 
     moisture_risk = float(np.clip(50.0 - oct_anomaly_pct * 2.2 - moisture_slope_yr * 1.8, 0.0, 100.0))
     saturation_risk = 75.0 if current_crop in region.get("oversupplied_crops", []) else 35.0

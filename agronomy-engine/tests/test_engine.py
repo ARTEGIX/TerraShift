@@ -837,3 +837,84 @@ def test_appeears_import_csv_dir_groups_task_name_and_hyphen_prefixes(monkeypatc
     assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
     assert fake_l2[("appeears:grid:8.31:80.40", 2022, 2024)]["ndvi"][0] == 0.51
     assert fake_l2[("appeears:grid:7.25:79.86", 2023, 2025)]["ndvi"][0] == 0.68
+
+
+def test_regional_lookup_ingestor_and_regions_ensure_endpoint(monkeypatch):
+    from app import regional_ingestor
+    from app.memory_store import InMemoryLookupStore
+
+    test_store = InMemoryLookupStore()
+
+    async def fake_reverse_geocode(lat: float, lon: float):
+        return {
+            "region_id": "region_ke_nakuru",
+            "name": "Nakuru County, Kenya",
+            "country_iso2": "KE",
+            "country_name": "Kenya",
+            "subdivision": "Nakuru County",
+            "source": "bigdatacloud_reverse_geocode",
+        }
+
+    async def fake_ag_stats(iso2: str):
+        return {
+            "country_iso2": iso2,
+            "ppp_factor": 0.94,
+            "harvested_area_ha": {"maize": 420_000.0, "cowpea": 95_000.0, "mung_bean": 40_000.0},
+            "revenue_mult_by_crop": {},
+            "source": "worldbank_ppp+faostat_qcl",
+        }
+
+    monkeypatch.setattr(regional_ingestor, "resolve_region_metadata", fake_reverse_geocode)
+    monkeypatch.setattr(regional_ingestor, "fetch_external_country_ag_stats", fake_ag_stats)
+
+    import asyncio
+
+    bundle = asyncio.run(
+        regional_ingestor.ensure_region_in_lookup_db(
+            lat=-0.3031,
+            lon=36.0800,
+            store=test_store,
+            persist_atlas=False,
+        )
+    )
+    assert bundle["region_id"] == "region_ke_nakuru"
+    assert bundle["soil_id"] == "soil_region_ke_nakuru"
+    assert "maize" in bundle["oversupplied_crops"]
+    assert bundle["dominant_pest_family"] == "poaceae"
+    assert "region_ke_nakuru" in test_store.regional_saturation
+    assert "soil_region_ke_nakuru" in test_store.soil_profiles
+    assert "region_ke_nakuru" in test_store.regional_crops_by_region
+
+    reg_view = test_store.for_region("region_ke_nakuru", ensure_crop_id="maize")
+    assert reg_view.crop_matrix.shape[1] == 6
+    assert reg_view.crop_matrix.flags["C_CONTIGUOUS"]
+    assert reg_view.oversupplied_mask("region_ke_nakuru")[reg_view.crop_index["maize"]] == 1.0
+
+    # Verify Layer 1 + Layer 2 run against the regional lookup slice
+    cube = build_fallback_cube(-0.3031, 36.0800)
+    l1 = run_layer1_regression(
+        cube=cube,
+        soil_type="soil_region_ke_nakuru",
+        current_crop="maize",
+        region_id="region_ke_nakuru",
+        store=test_store,
+    )
+    assert l1.region_profile["_id"] == "region_ke_nakuru"
+    assert l1.soil_profile["_id"] == "soil_region_ke_nakuru"
+    strats, rec, meta = run_layer2_evolution("maize", "cost", l1, store=test_store)
+    assert len(strats) == 3
+    assert rec == "C_COST_MARKET_OPTIMIZED"
+    assert meta["lookup_source"].endswith(":region_ke_nakuru")
+
+    # Also test FastAPI POST /regions/ensure and GET /crops?region_id=...
+    with TestClient(app) as client:
+        resp = client.post("/regions/ensure", json={"lat": -0.3031, "lon": 36.0800})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["region_id"] == "region_ke_nakuru"
+
+        crops_resp = client.get("/crops", params={"region_id": "region_ke_nakuru"})
+        assert crops_resp.status_code == 200
+        reg_crops = crops_resp.json()
+        assert len(reg_crops) == 12
+        assert all(c["region_id"] == "region_ke_nakuru" for c in reg_crops)

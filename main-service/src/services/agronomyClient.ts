@@ -1,6 +1,21 @@
 import { env } from "../config/env";
-import type { PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse } from "../types/contract";
+import type { Polygon, PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse } from "../types/contract";
 import { HttpError } from "../utils/HttpError";
+
+export interface EnsureRegionResponse {
+  region_id: string;
+  region_name: string;
+  country_iso2: string;
+  agro_zone: string;
+  soil_id: string;
+  soil_type: string;
+  oversupplied_crops: string[];
+  dominant_pest_family: string;
+  bare_field_months: number[];
+  viable_crops_count: number;
+  viable_crop_ids: string[];
+  cached: boolean;
+}
 
 /** HTTP client for the Python agronomy-engine. */
 export async function predict(body: PredictRequest): Promise<PredictResponse> {
@@ -25,10 +40,30 @@ export async function predict(body: PredictRequest): Promise<PredictResponse> {
   return (await res.json()) as PredictResponse;
 }
 
-export async function listCrops(): Promise<unknown[]> {
-  const res = await fetch(`${env.AGRONOMY_ENGINE_URL}/crops`, { signal: AbortSignal.timeout(5_000) });
+export async function listCrops(regionId?: string): Promise<unknown[]> {
+  const qs = regionId ? `?region_id=${encodeURIComponent(regionId)}` : "";
+  const res = await fetch(`${env.AGRONOMY_ENGINE_URL}/crops${qs}`, { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) throw HttpError.badGateway(`Agronomy engine returned ${res.status}`);
   return (await res.json()) as unknown[];
+}
+
+export async function ensureRegion(
+  lat: number,
+  lon: number,
+  polygon?: Polygon,
+): Promise<EnsureRegionResponse | null> {
+  try {
+    const res = await fetch(`${env.AGRONOMY_ENGINE_URL}/regions/ensure`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lon, ...(polygon ? { polygon } : {}) }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as EnsureRegionResponse;
+  } catch {
+    return null;
+  }
 }
 
 export async function engineHealthy(): Promise<boolean> {

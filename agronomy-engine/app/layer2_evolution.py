@@ -432,7 +432,8 @@ def run_layer2_evolution(
     pop_size = int(settings.ga_population or 50)
     n_gen = int(settings.ga_generations or 30)
 
-    curr_idx = store.crop_index.get(current_crop_id, 0)
+    active_store = store.for_region(layer1.region_profile.get("_id"), ensure_crop_id=current_crop_id)
+    curr_idx = active_store.crop_index.get(current_crop_id, 0)
     seq_a = (curr_idx, curr_idx, curr_idx)
 
     # Priority nudges the evolutionary objective weights
@@ -455,7 +456,7 @@ def run_layer2_evolution(
         seed=base_seed + 11,
         pop_size=pop_size,
         n_gen=n_gen,
-        store=store,
+        store=active_store,
     )
 
     seq_c, _ = _evolve_strategy(
@@ -466,7 +467,7 @@ def run_layer2_evolution(
         seed=base_seed + 29,
         pop_size=pop_size,
         n_gen=n_gen,
-        store=store,
+        store=active_store,
     )
 
     strat_a = _build_strategy_payload(
@@ -475,7 +476,7 @@ def run_layer2_evolution(
         "Continues your current crop across all 3 seasons with conventional synthetic inputs.",
         seq_a,
         layer1,
-        store,
+        active_store,
     )
     strat_b = _build_strategy_payload(
         "B_SOIL_WATER_RESILIENCE",
@@ -483,7 +484,7 @@ def run_layer2_evolution(
         "Maximizes biological nitrogen fixation, erosion cover, pest family breaks, and drought tolerance.",
         seq_b,
         layer1,
-        store,
+        active_store,
     )
     strat_c = _build_strategy_payload(
         "C_COST_MARKET_OPTIMIZED",
@@ -491,7 +492,7 @@ def run_layer2_evolution(
         "Balances biological nitrogen fertilizer savings with high-margin crops that avoid regional oversupply.",
         seq_c,
         layer1,
-        store,
+        active_store,
     )
 
     strategies = [strat_a, strat_b, strat_c]
@@ -502,6 +503,6 @@ def run_layer2_evolution(
         "population": pop_size,
         "generations": n_gen,
         "seed": base_seed,
-        "lookup_source": store.source,
+        "lookup_source": active_store.source,
     }
     return strategies, recommended, optimizer_meta

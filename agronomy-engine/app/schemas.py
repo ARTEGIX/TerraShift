@@ -30,6 +30,13 @@ class Centroid(BaseModel):
     lon: float = Field(..., ge=-180, le=180)
 
 
+class RegionEnsureRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    polygon: GeoJSONPolygon | None = None
+    force_refresh: bool = False
+
+
 class PredictRequest(BaseModel):
     polygon: GeoJSONPolygon
     centroid: Centroid
