@@ -204,17 +204,31 @@ async def project_recalculate(req: ProjectRecalcRequest) -> ProjectRecalcRespons
     Runs fetch_fused_climate + run_layer1_regression then calls _build_strategy_payload
     with the fixed crop sequence (skipping GA search), applying user overrides per season.
     """
-    # Step 0: Climate fusion (~1km Redis Grid Cache + 36m NumPy array)
-    cube = await fetch_fused_climate(req.centroid.lat, req.centroid.lon)
+    # Step 0: Climate fusion + cached SoilGrids, terrain & seasonal forecast telemetry
+    cube, soilgrids, terrain, seasonal_forecast = await asyncio.gather(
+        fetch_fused_climate(req.centroid.lat, req.centroid.lon),
+        fetch_soilgrids_profile(req.centroid.lat, req.centroid.lon),
+        fetch_terrain_profile(req.centroid.lat, req.centroid.lon, None),
+        fetch_seasonal_forecast(req.centroid.lat, req.centroid.lon),
+    )
+
+    effective_soil_type = (
+        soilgrids["inferred_soil_type"]
+        if soilgrids and "soil_type" not in req.model_fields_set
+        else req.soil_type
+    )
 
     # Layer 1: In-Memory Regression Engine
     layer1 = run_layer1_regression(
         cube=cube,
-        soil_type=req.soil_type,
+        soil_type=effective_soil_type,
         current_crop=req.current_crop,
         region_id=req.region_id,
         planting_month=req.planting_month,
         store=lookup_store,
+        soilgrids=soilgrids,
+        terrain=terrain,
+        seasonal_forecast=seasonal_forecast,
     )
 
     # Resolve crop indices for the fixed 3-season sequence

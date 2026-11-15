@@ -5,13 +5,20 @@ from fastapi.testclient import TestClient
 
 import seed_atlas
 from app.layer1_regression import run_layer1_regression
-from app.layer2_evolution import run_layer2_evolution
+from app.layer2_evolution import (
+    _build_strategy_payload,
+    evaluate_population_vectorized,
+    run_layer2_evolution,
+)
 from app.main import app
 from app.memory_store import lookup_store
 from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
 from app.forecast_client import parse_seasonal_forecast
 from app.nasa_fusion import (
+    COL_NDVI,
     COL_SMAP_MOISTURE,
+    COL_SOLAR,
+    COL_T2M_MAX,
     SOIL_PARAMETERS,
     _fetch_power_raw,
     build_cube_from_power,
@@ -294,6 +301,89 @@ def test_layer1_uses_regressed_smap_reserve_and_planting_month_anomaly():
     )
     assert l1_apr.october_moisture_anomaly_pct < 0.0
     assert l1_oct.october_moisture_anomaly_pct > 0.0
+
+
+def test_layer2_thermal_solar_ndvi_vigor_and_soilgrids_whc_som():
+    # Improvement 3: Seasonal heat stress, VPD, solar irradiance & ECOSTRESS ESI in Layer 2 scoring
+    cube_cool = build_fallback_cube(7.87, 80.77)
+    cube_cool.matrix[:, COL_T2M_MAX] = 30.0
+    cube_cool.matrix[:, COL_SOLAR] = 5.0
+
+    cube_hot = build_fallback_cube(7.87, 80.77)
+    cube_hot.matrix[:, COL_T2M_MAX] = 38.5
+    cube_hot.matrix[:, COL_SOLAR] = 6.8
+    cube_hot.extra_series = {
+        "t2m_min_c": [25.0] * 36,
+        "rh2m_pct": [35.0] * 36,
+        "ecostress_esi": [0.32] * 36,
+    }
+
+    l1_cool = run_layer1_regression(cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_hot = run_layer1_regression(cube=cube_hot, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert l1_hot.season_tmax_c.shape == (3,)
+    assert l1_hot.season_solar_kwh.shape == (3,)
+    assert np.all(l1_hot.season_tmax_c > 37.0)
+    assert np.all(l1_hot.season_solar_kwh > 6.0)
+
+    onion_idx = lookup_store.crop_index["onion"]
+    sesame_idx = lookup_store.crop_index["sesame"]
+    pop_test = np.array([[onion_idx, onion_idx, onion_idx], [sesame_idx, sesame_idx, sesame_idx]], dtype=np.int32)
+
+    _, fw_cool, fc_cool = evaluate_population_vectorized(pop_test, l1_cool, lookup_store)
+    _, fw_hot, fc_hot = evaluate_population_vectorized(pop_test, l1_hot, lookup_store)
+    # Heat-sensitive onion drops sharply under >35°C + high VPD + low ESI, while C4/heat-tolerant sesame benefits from high solar
+    assert fc_hot[0] < fc_cool[0]
+    assert fw_hot[0] < fw_cool[0]
+    assert fw_hot[1] >= fw_cool[1]
+
+    # Improvement 4: Dynamic bare-field months from MODIS/HLS NDVI (<0.28) + field vigor multiplier from p90 NDVI
+    cube_deg = build_fallback_cube(7.87, 80.77)
+    cube_deg.matrix[:, COL_NDVI] = 0.32
+    cube_deg.matrix[cube_deg.month_numbers == 6, COL_NDVI] = 0.21  # June bare soil detected from satellite
+
+    cube_vig = build_fallback_cube(7.87, 80.77)
+    cube_vig.matrix[:, COL_NDVI] = 0.76
+
+    l1_deg = run_layer1_regression(cube=cube_deg, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_vig = run_layer1_regression(cube=cube_vig, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert 6 in l1_deg.bare_field_months
+    assert l1_vig.field_vigor_multiplier > l1_deg.field_vigor_multiplier
+
+    strat_deg = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_deg, lookup_store
+    )
+    strat_vig = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_vig, lookup_store
+    )
+    assert strat_vig["totals"]["revenue_usd_ha"] > strat_deg["totals"]["revenue_usd_ha"]
+
+    # Improvement 5: Pedotransfer water_holding_mm_m & initial SOM % from SoilGrids soc_g_kg
+    sg_rich = {"clay_pct": 38.0, "sand_pct": 22.0, "silt_pct": 40.0, "ph": 6.4, "soc_g_kg": 25.0}
+    sg_sandy = {"clay_pct": 10.0, "sand_pct": 75.0, "silt_pct": 15.0, "ph": 6.0, "soc_g_kg": 6.0}
+    l1_rich = run_layer1_regression(
+        cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=sg_rich
+    )
+    l1_sandy = run_layer1_regression(
+        cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=sg_sandy
+    )
+    assert l1_rich.soil_profile["water_holding_mm_m"] > l1_sandy.soil_profile["water_holding_mm_m"]
+    assert np.isclose(l1_rich.soil_profile["som_pct"], 25.0 * 0.1724, atol=1e-2)
+
+    strat_rich = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_rich, lookup_store
+    )
+    # Initial SOM = 25.0 * 0.1724 = 4.31%, minus 0.05 in season 1 -> ~4.26%
+    assert np.isclose(strat_rich["seasons"][0]["metrics"]["som_pct"], 25.0 * 0.1724 - 0.05, atol=1e-2)
+
+    # Improvement 6: Blend seasonal forecast season1_mean_tmax_c into Season 1 pred_t2m
+    l1_fc_hot = run_layer1_regression(
+        cube=cube_cool,
+        soil_type="soil_clay_loam",
+        current_crop="paddy_rice",
+        seasonal_forecast={"season1_precip_mm": 400.0, "season1_mean_tmax_c": 39.0},
+    )
+    assert l1_fc_hot.seasonal_forecast_tmax_c == 39.0
+    assert l1_fc_hot.season_tmax_c[0] > l1_cool.season_tmax_c[0]
 
 
 def test_terrain_seasonal_forecast_and_hls_ecostress():

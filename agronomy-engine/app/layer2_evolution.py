@@ -44,6 +44,39 @@ from app.memory_store import (
 N_SEASONS = 3
 UREA_N_COST_USD_PER_KG = 1.35
 LEGUME_N_CARRYOVER = 0.65
+HEAT_SENSITIVE_CROPS = {"onion", "chilli", "paddy_rice"}
+HEAT_TOLERANT_CROPS = {"sesame", "finger_millet", "cowpea", "maize", "cassava"}
+
+
+def _thermal_and_radiation_multiplier(
+    pop: np.ndarray,
+    drought_tol: np.ndarray,
+    layer1: Layer1RegressionOutput,
+    store: InMemoryLookupStore = lookup_store,
+) -> np.ndarray:
+    """Compute per-season thermal, VPD, ECOSTRESS ESI & solar irradiance yield multipliers `(P, 3)`."""
+    heat_sens_mask = np.array([1.0 if cid in HEAT_SENSITIVE_CROPS else 0.0 for cid in store.crop_ids], dtype=np.float64)
+    heat_tol_mask = np.array([1.0 if cid in HEAT_TOLERANT_CROPS else 0.0 for cid in store.crop_ids], dtype=np.float64)
+
+    pop_sens = heat_sens_mask[pop]  # (P, 3)
+    pop_tol = heat_tol_mask[pop]    # (P, 3)
+
+    s_tmax = np.asarray(getattr(layer1, "season_tmax_c", np.full(3, 31.5, dtype=np.float64)), dtype=np.float64)[None, :]
+    s_solar = np.asarray(getattr(layer1, "season_solar_kwh", np.full(3, 5.2, dtype=np.float64)), dtype=np.float64)[None, :]
+
+    heat_excess = np.maximum(0.0, s_tmax - 33.0)
+    extreme_35 = np.maximum(0.0, s_tmax - 35.0)
+    vpd_stress = max(0.0, ((layer1.mean_vpd_kpa or 0.0) - 1.6) * 0.045)
+    esi_stress = 0.045 if (layer1.mean_ecostress_esi is not None and layer1.mean_ecostress_esi < 0.45) else 0.0
+    frost_pen = min(0.08, float(layer1.frost_months or 0) * 0.02)
+
+    sens_pen = pop_sens * (heat_excess * 0.04 + extreme_35 * 0.05 + vpd_stress + esi_stress)
+    neutral_pen = (1.0 - pop_sens - pop_tol) * (heat_excess * 0.015 * (1.0 - drought_tol))
+    tol_bonus = pop_tol * (
+        np.minimum(0.06, heat_excess * 0.015) + np.clip((s_solar - 5.0) * 0.025, -0.02, 0.05) - frost_pen
+    )
+    solar_base = (1.0 - pop_tol) * np.clip((s_solar - 5.0) * 0.01, -0.02, 0.02)
+    return np.clip(1.0 - sens_pen - neutral_pen + tol_bonus + solar_base, 0.45, 1.12)
 
 
 def evaluate_population_vectorized(
@@ -109,25 +142,36 @@ def evaluate_population_vectorized(
     f_soil = np.clip(0.42 * n_score + 0.28 * cover_score + 0.30 * rotation_bonus + ph_buffer_bonus - cover_overuse_pen, 0.0, 1.0)
 
     # ------------------------------------------------------------------
-    # 2. F_water: Seasonal water budget compliance + drought tolerance
+    # 2. F_water: Seasonal water budget compliance + drought & thermal tolerance
     # ------------------------------------------------------------------
     budgets = layer1.season_water_budgets_mm[None, :]  # (1, 3)
     deficit_mm = np.maximum(0.0, water_demand - budgets)  # (P, 3)
     rel_deficit = deficit_mm / np.maximum(1.0, water_demand)
     budget_score = 1.0 - np.mean(np.clip(rel_deficit, 0.0, 1.0), axis=1)
     tol_score = np.mean(drought_tol, axis=1)
-    f_water = np.clip(0.62 * budget_score + 0.38 * tol_score - cover_overuse_pen * 0.5, 0.0, 1.0)
+    thermal_rad_mult = _thermal_and_radiation_multiplier(pop, drought_tol, layer1, store)  # (P, 3)
+    thermal_water_adj = np.mean(thermal_rad_mult - 1.0, axis=1) * 0.35
+    f_water = np.clip(0.62 * budget_score + 0.38 * tol_score + thermal_water_adj - cover_overuse_pen * 0.5, 0.0, 1.0)
 
     # ------------------------------------------------------------------
     # 3. F_cost: Net margin + biological N fertilizer credit - oversupply
     # ------------------------------------------------------------------
-    # Yield factor depends on water adequacy, drought tolerance, and pest rotation break
+    # Yield factor depends on water adequacy, drought tolerance, thermal/solar stress, and pest rotation break
     water_yield_mult = np.clip(1.0 - rel_deficit * (1.0 - 0.65 * drought_tol), 0.35, 1.05)
     pest_yield_mult = np.ones_like(water_yield_mult)
     pest_yield_mult[:, 1] *= np.where(same_12 > 0, 0.88, 1.03)
     pest_yield_mult[:, 2] *= np.where(same_23 > 0, 0.85, 1.04)
+    vigor_mult = float(getattr(layer1, "field_vigor_multiplier", 1.0))
 
-    adj_revenue = base_rev * water_yield_mult * pest_yield_mult * ph_yield_mult * (1.0 - oversupply_pen)
+    adj_revenue = (
+        base_rev
+        * water_yield_mult
+        * pest_yield_mult
+        * thermal_rad_mult
+        * ph_yield_mult
+        * vigor_mult
+        * (1.0 - oversupply_pen)
+    )
 
     # Biological N credit carried from season t to season t+1 reduces synthetic urea cost
     n_credit_s2 = np.maximum(0.0, n_impact[:, 0]) * LEGUME_N_CARRYOVER
@@ -230,8 +274,18 @@ def _build_strategy_payload(
     seasons_out: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    som_pct = 2.10 if layer1.soil_profile["_id"] == "soil_clay_loam" else 1.45
+    soc_g_kg = layer1.soil_profile.get("soc_g_kg")
+    if soc_g_kg is not None:
+        som_pct = float(np.clip(float(soc_g_kg) * 0.1724, 0.4, 8.0))
+    else:
+        som_pct = 2.10 if layer1.soil_profile["_id"] == "soil_clay_loam" else 1.45
     som_start = som_pct
+    drought_tol_row = store.crop_matrix[arr, COL_DROUGHT_TOL]
+    thermal_rad_row = _thermal_and_radiation_multiplier(arr, drought_tol_row, layer1, store)[0]
+    vigor_mult = float(getattr(layer1, "field_vigor_multiplier", 1.0))
+    soil_ph = layer1.soil_profile.get("ph")
+    ph_yield_mult = 0.94 if (soil_ph is not None and (float(soil_ph) < 5.0 or float(soil_ph) > 8.2)) else 1.0
+    s_tmax_arr = getattr(layer1, "season_tmax_c", np.full(3, 31.5, dtype=np.float64))
     cum_n = 0.0
     n_carry = 0.0
     total_water = 0.0
@@ -260,6 +314,10 @@ def _build_strategy_payload(
         same_family = prev_family == fam
         if same_family:
             warnings.append(f"Season {s_idx + 1}: consecutive {fam} crop increases pest & disease pressure.")
+        if cid in HEAT_SENSITIVE_CROPS and float(s_tmax_arr[s_idx]) > 35.0:
+            warnings.append(
+                f"Season {s_idx + 1}: {crop['name']} faces severe thermal stress (projected max temp {float(s_tmax_arr[s_idx]):.1f}°C > 35°C)."
+            )
 
         n_imp = float(crop["nitrogen_impact_kg_ha"])
         cum_n += n_imp
@@ -280,13 +338,14 @@ def _build_strategy_payload(
 
         water_mult = float(np.clip(1.0 - rel_def * (1.0 - 0.65 * drought_tol), 0.35, 1.05))
         pest_mult = 0.86 if same_family else 1.03
-        yield_factor = round(water_mult * pest_mult, 3)
+        thermal_mult = float(thermal_rad_row[s_idx])
+        yield_factor = round(water_mult * pest_mult * thermal_mult * ph_yield_mult, 3)
 
         oversupply_disc = float(layer1.oversupply_penalty_vector[crop_idx])
         if oversupply_disc > 0:
             warnings.append(f"{crop['name']} is flagged as regionally oversupplied (-{int(oversupply_disc * 100)}% price risk).")
 
-        rev = float(crop["market_revenue_usd_ha"]) * yield_factor * (1.0 - oversupply_disc)
+        rev = float(crop["market_revenue_usd_ha"]) * yield_factor * vigor_mult * (1.0 - oversupply_disc)
         margin = rev - base_cost
 
         som_delta_step = (0.14 if crop["category"] == "cover_crop" else 0.06 if crop["category"] == "legume" else -0.05) - (
