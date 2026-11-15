@@ -263,7 +263,6 @@ async def _download_and_cache_bundle(
         elif "SPL4SMGP" in norm_name:
             smap_csv = dl.text
 
-    await cache.delete_key(pending_key)
     aggregated = aggregate_appeears_csvs(modis_csv, smap_csv, months, hls_csv=hls_csv, eco_csv=eco_csv)
     if aggregated is None:
         return None
@@ -273,6 +272,7 @@ async def _download_and_cache_bundle(
         aggregated,
         ttl_seconds=max(settings.cache_ttl_seconds, APPEEARS_CACHE_TTL_SECONDS),
     )
+    await cache.delete_key(pending_key)
     log.info("Cached AppEEARS satellite series in Redis under %s", cache_key)
     return aggregated
 
