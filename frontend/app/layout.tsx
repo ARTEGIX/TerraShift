@@ -9,6 +9,11 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 export const metadata: Metadata = {
   title: "TerraShift — Field Shift: Adapting Farms with NASA Data",
   description: "Climate-smart 3-season crop rotation planner powered by NASA POWER agroclimatology and Gemini.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export const viewport: Viewport = {

@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { Notice } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { analyseFarm, deleteAnalysis, deleteFarm, fetchCrops, getFarmDetail, updateFarm } from "@/lib/api";
+import { ApiError, analyseFarm, deleteAnalysis, deleteFarm, fetchCrops, getFarmDetail, getToken, updateFarm } from "@/lib/api";
 import { haToAcres } from "@/lib/geo";
 import { PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, prettyId, shortCrop } from "@/lib/labels";
 import { letterOf, type CropInfo, type Farm, type FarmReportSummary, type Polygon, type Priority } from "@/lib/types";
@@ -43,6 +43,10 @@ export default function FarmDetailPage() {
   const [reportToDelete, setReportToDelete] = useState<FarmReportSummary | null>(null);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.replace(`/login?next=/farms/${encodeURIComponent(id)}`);
+      return;
+    }
     fetchCrops().then(setCrops).catch(() => setCrops([]));
     setLoading(true);
     setError(null);
@@ -57,9 +61,15 @@ export default function FarmDetailPage() {
         setPriority(res.farm.default_priority);
         setPolygon(res.farm.polygon);
       })
-      .catch((err) => setError((err as Error).message))
+      .catch((err) => {
+        if (err instanceof ApiError && err.isAuth) {
+          router.replace(`/login?next=/farms/${encodeURIComponent(id)}`);
+        } else {
+          setError((err as Error).message);
+        }
+      })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, router]);
 
   const cropName = (cid: string) => shortCrop(crops.find((c) => c.id === cid)?.name ?? prettyId(cid));
 
