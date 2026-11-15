@@ -353,20 +353,30 @@ def build_regional_crops_catalog(
     mean_tmax = float(np.mean(mat[:, COL_T2M_MAX]))
     peak_tmax = float(np.max(mat[:, COL_T2M_MAX]))
     mean_et_monthly = float(np.mean(mat[:, COL_ET]))
+    annual_precip_mm = float(np.sum(mat[:, COL_PRECIP]) / max(1.0, mat.shape[0] / 12.0))
+    agro_zone = classify_agro_zone(cube.lat, annual_precip_mm)
     raw_tmin = (cube.extra_series or {}).get("t2m_min_c")
     min_tmin = float(np.min(raw_tmin)) if isinstance(raw_tmin, list) and raw_tmin else (mean_tmax - 11.0)
+    harvested_map: dict[str, float] = ag_stats.get("harvested_area_ha") or {}
 
     # Evapotranspiration water demand scaling relative to tropical reference (135 mm/month)
     et_demand_mult = float(np.clip(mean_et_monthly / 135.0, 0.78, 1.28))
     soil_ph = soil_doc.get("ph")
+
+    # Obligate tropical crops excluded in temperate zones unless FAOSTAT confirms production
+    tropical_only = {"cassava", "paddy_rice", "finger_millet", "sesame"}
 
     regional_crops: list[dict[str, Any]] = []
     for cid in store.crop_ids:
         base = store.crops_by_id[cid]
         tmin_limit, tmax_limit = CROP_THERMAL_LIMITS.get(cid, (5.0, 42.0))
 
-        # Check thermal & frost viability in this region
-        viable = bool(min_tmin >= (tmin_limit - 3.0) and peak_tmax <= (tmax_limit + 3.0))
+        # Check thermal, frost & agro-zone viability in this region
+        viable = bool(min_tmin >= (tmin_limit - 2.0) and peak_tmax <= (tmax_limit + 3.0))
+        if agro_zone == "temperate" and cid in tropical_only and harvested_map.get(cid, 0.0) < 25_000.0:
+            viable = False
+        if agro_zone == "arid_semiarid" and cid == "paddy_rice" and annual_precip_mm < 550.0:
+            viable = False
 
         # Adjust water demand by local evaporative demand (ET)
         adj_water_mm = round(float(base["water_demand_mm"]) * et_demand_mult, 1)

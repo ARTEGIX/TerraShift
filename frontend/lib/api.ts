@@ -158,18 +158,46 @@ export async function logout(): Promise<void> {
 
 /* ------------------------------------------------------------------ reference data */
 
-let cropsCache: Promise<CropInfo[]> | null = null;
+const cropsCache = new Map<string, Promise<CropInfo[]>>();
 
-/** Crop list from lookup_db (via main-service). Cached for the page session; throws if it can't load. */
-export function fetchCrops(): Promise<CropInfo[]> {
-  cropsCache ??= request<{ crops: CropInfo[] }>("/crops", {}, 15_000)
-    // lookup_db documents use `_id`; normalise to `id` (same as the team's fix on main).
-    .then(({ crops }) => crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })))
-    .catch((err) => {
-      cropsCache = null; // allow a retry
-      throw err;
-    });
-  return cropsCache;
+/** Crop list from lookup_db (via main-service), optionally filtered to a region's viable crops. */
+export function fetchCrops(regionId?: string): Promise<CropInfo[]> {
+  const key = regionId?.trim() || "__global__";
+  let p = cropsCache.get(key);
+  if (!p) {
+    const qs = regionId?.trim() ? `?region_id=${encodeURIComponent(regionId.trim())}` : "";
+    p = request<{ crops: CropInfo[] }>(`/crops${qs}`, {}, 15_000)
+      .then(({ crops }) => crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })))
+      .catch((err) => {
+        cropsCache.delete(key); // allow a retry
+        throw err;
+      });
+    cropsCache.set(key, p);
+  }
+  return p;
+}
+
+export interface EnsureRegionResult {
+  region_id: string;
+  region_name: string;
+  soil_type: SoilType;
+  oversupplied_crops: string[];
+  viable_crop_ids: string[];
+}
+
+export async function ensureRegion(lat: number, lon: number, polygon?: Polygon): Promise<EnsureRegionResult | null> {
+  try {
+    return await request<EnsureRegionResult>(
+      "/regions/ensure",
+      {
+        method: "POST",
+        body: JSON.stringify({ lat, lon, ...(polygon ? { polygon } : {}) }),
+      },
+      15_000,
+    );
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ farms */

@@ -46,6 +46,7 @@ UREA_N_COST_USD_PER_KG = 1.35
 LEGUME_N_CARRYOVER = 0.65
 HEAT_SENSITIVE_CROPS = {"onion", "chilli", "paddy_rice"}
 HEAT_TOLERANT_CROPS = {"sesame", "finger_millet", "cowpea", "maize", "cassava"}
+COLD_TOLERANT_CROPS = {"onion", "chickpea", "sunn_hemp"}
 
 
 def _thermal_and_radiation_multiplier(
@@ -57,26 +58,31 @@ def _thermal_and_radiation_multiplier(
     """Compute per-season thermal, VPD, ECOSTRESS ESI & solar irradiance yield multipliers `(P, 3)`."""
     heat_sens_mask = np.array([1.0 if cid in HEAT_SENSITIVE_CROPS else 0.0 for cid in store.crop_ids], dtype=np.float64)
     heat_tol_mask = np.array([1.0 if cid in HEAT_TOLERANT_CROPS else 0.0 for cid in store.crop_ids], dtype=np.float64)
+    cold_tol_mask = np.array([1.0 if cid in COLD_TOLERANT_CROPS else 0.0 for cid in store.crop_ids], dtype=np.float64)
 
     pop_sens = heat_sens_mask[pop]  # (P, 3)
     pop_tol = heat_tol_mask[pop]    # (P, 3)
+    pop_cold = cold_tol_mask[pop]   # (P, 3)
 
     s_tmax = np.asarray(getattr(layer1, "season_tmax_c", np.full(3, 31.5, dtype=np.float64)), dtype=np.float64)[None, :]
     s_solar = np.asarray(getattr(layer1, "season_solar_kwh", np.full(3, 5.2, dtype=np.float64)), dtype=np.float64)[None, :]
 
     heat_excess = np.maximum(0.0, s_tmax - 33.0)
     extreme_35 = np.maximum(0.0, s_tmax - 35.0)
+    cold_deficit = np.maximum(0.0, 20.0 - s_tmax)
     vpd_stress = max(0.0, ((layer1.mean_vpd_kpa or 0.0) - 1.6) * 0.045)
     esi_stress = 0.045 if (layer1.mean_ecostress_esi is not None and layer1.mean_ecostress_esi < 0.45) else 0.0
     frost_pen = min(0.08, float(layer1.frost_months or 0) * 0.02)
 
     sens_pen = pop_sens * (heat_excess * 0.04 + extreme_35 * 0.05 + vpd_stress + esi_stress)
     neutral_pen = (1.0 - pop_sens - pop_tol) * (heat_excess * 0.015 * (1.0 - drought_tol))
+    warm_cold_pen = (1.0 - pop_cold) * (cold_deficit * 0.032 + frost_pen)
+    cold_bonus = pop_cold * np.minimum(0.05, cold_deficit * 0.008)
     tol_bonus = pop_tol * (
-        np.minimum(0.06, heat_excess * 0.015) + np.clip((s_solar - 5.0) * 0.025, -0.02, 0.05) - frost_pen
+        np.minimum(0.06, heat_excess * 0.015) + np.clip((s_solar - 5.0) * 0.025, -0.02, 0.05)
     )
     solar_base = (1.0 - pop_tol) * np.clip((s_solar - 5.0) * 0.01, -0.02, 0.02)
-    return np.clip(1.0 - sens_pen - neutral_pen + tol_bonus + solar_base, 0.45, 1.12)
+    return np.clip(1.0 - sens_pen - neutral_pen - warm_cold_pen + tol_bonus + cold_bonus + solar_base, 0.40, 1.12)
 
 
 def evaluate_population_vectorized(
@@ -317,6 +323,10 @@ def _build_strategy_payload(
         if cid in HEAT_SENSITIVE_CROPS and float(s_tmax_arr[s_idx]) > 35.0:
             warnings.append(
                 f"Season {s_idx + 1}: {crop['name']} faces severe thermal stress (projected max temp {float(s_tmax_arr[s_idx]):.1f}°C > 35°C)."
+            )
+        if cid not in COLD_TOLERANT_CROPS and float(s_tmax_arr[s_idx]) < 18.0:
+            warnings.append(
+                f"Season {s_idx + 1}: {crop['name']} faces cold/winter stress (projected seasonal temp {float(s_tmax_arr[s_idx]):.1f}°C < 18°C)."
             )
 
         n_imp = float(crop["nitrogen_impact_kg_ha"])

@@ -101,7 +101,7 @@ export function templateExplanation(p: PredictResponse): Explanation {
         risks: s.warnings.slice(0, 3),
         first_steps:
           s.id === "A_BASELINE"
-            ? ["Test soil nitrogen before Maha planting", "Budget for +8%/season urea cost inflation"]
+            ? ["Test soil nitrogen before Season 1 planting", "Budget for +8%/season urea cost inflation"]
             : [
                 `Secure ${s.seasons[0].crop_name} seed ahead of ${s.seasons[0].season_label}`,
                 "Incorporate legume/cover-crop residue to capture biological nitrogen credit",

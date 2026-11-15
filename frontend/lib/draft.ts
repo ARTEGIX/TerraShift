@@ -8,6 +8,7 @@ export interface FieldDraft {
   step: 0 | 1 | 2 | 3;
   name: string;
   polygon: Polygon | null;
+  regionId?: string | null;
   currentCrop: string | null;
   plantingMonth: number;
   soilType: SoilType | null;
@@ -20,6 +21,7 @@ export const EMPTY_DRAFT: FieldDraft = {
   step: 0,
   name: "",
   polygon: null,
+  regionId: null,
   currentCrop: null,
   plantingMonth: 10,
   soilType: null,

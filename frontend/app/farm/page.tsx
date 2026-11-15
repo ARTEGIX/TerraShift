@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { ApiError, analyseFarm, createFarm, fetchCrops, getToken, prefetchSatellite } from "@/lib/api";
+import { ApiError, analyseFarm, createFarm, ensureRegion, fetchCrops, getToken, prefetchSatellite } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
@@ -49,10 +49,15 @@ export default function FarmWizardPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  function loadCrops() {
+  function loadCrops(regionId?: string | null) {
     setCropsError(null);
-    fetchCrops()
-      .then(setCrops)
+    fetchCrops(regionId ?? draft.regionId ?? undefined)
+      .then((list) => {
+        setCrops(list);
+        if (draft.currentCrop && !list.some((c) => c.id === draft.currentCrop)) {
+          update({ currentCrop: null });
+        }
+      })
       .catch((err: Error) => setCropsError(err.message));
   }
   useEffect(() => {
@@ -61,7 +66,7 @@ export default function FarmWizardPage() {
       return;
     }
     setAuthed(true);
-    loadCrops();
+    loadCrops(draft.regionId);
   }, [router]);
 
   const step = draft.step;
@@ -81,6 +86,12 @@ export default function FarmWizardPage() {
     }
     if (step === 0 && field?.centroid) {
       prefetchSatellite(field.centroid.lat, field.centroid.lon);
+      ensureRegion(field.centroid.lat, field.centroid.lon, draft.polygon ?? undefined).then((reg) => {
+        if (reg?.region_id) {
+          update({ regionId: reg.region_id, ...(draft.soilType ? {} : { soilType: reg.soil_type }) });
+          loadCrops(reg.region_id);
+        }
+      });
     }
     if (step < 3) return goTo((step + 1) as FieldDraft["step"]);
     await run();
@@ -94,7 +105,7 @@ export default function FarmWizardPage() {
         name: draft.name.trim() || "My field",
         polygon: draft.polygon!,
         // centroid omitted: main-service computes an area-weighted one.
-        region_id: field?.centroid ? regionFor(field.centroid.lat) : undefined,
+        region_id: draft.regionId ?? (field?.centroid ? regionFor(field.centroid.lat) : undefined),
         soil_type: draft.soilType!,
         current_crop: draft.currentCrop!,
         default_priority: draft.priority!,
@@ -241,7 +252,7 @@ export default function FarmWizardPage() {
               {cropsError && (
                 <Notice tone="error">
                   <p>Couldn&apos;t load the crop list. {cropsError}</p>
-                  <button type="button" onClick={loadCrops} className="btn-plain mt-1 text-[15px]">
+                  <button type="button" onClick={() => loadCrops(draft.regionId)} className="btn-plain mt-1 text-[15px]">
                     Try again
                   </button>
                 </Notice>
@@ -274,7 +285,7 @@ export default function FarmWizardPage() {
             </Question>
             <Question
               label="When do you plant next?"
-              help="Maha is the main rainy season (planting around October). Yala is the drier season (planting around April). The plan covers three seasons from this month."
+              help="Pick the starting month for Season 1. The plan projects three consecutive 6-month growing seasons (including wet, dry, summer, or winter conditions for your region)."
             >
               <ChoiceCards
                 name="planting"
