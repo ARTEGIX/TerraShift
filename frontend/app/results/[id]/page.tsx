@@ -274,7 +274,7 @@ export default function ResultsPage() {
         </div>
       )}
 
-      {p.climate.source === "nasa_power" && satStatus && satStatus !== "ready" && (
+{p.climate.source === "nasa_power" && satStatus === "pending" && (
         <p className="no-print mt-4 flex items-center gap-2.5 rounded-2xl bg-black/[0.04] px-4 py-3 text-[14px] text-ink-3">
           <RefreshCw className="size-4 shrink-0 animate-spin" aria-hidden />
           Using NASA POWER weather · High-res satellite NDVI &amp; soil moisture are processing in the background…
