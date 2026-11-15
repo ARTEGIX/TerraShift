@@ -4,7 +4,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 import seed_atlas
-from app.layer1_regression import run_layer1_regression
+from app.layer1_regression import evaluate_layer1_models, run_layer1_regression
 from app.layer2_evolution import (
     _build_strategy_payload,
     evaluate_population_vectorized,
@@ -918,3 +918,41 @@ def test_regional_lookup_ingestor_and_regions_ensure_endpoint(monkeypatch):
         reg_crops = crops_resp.json()
         assert len(reg_crops) == 12
         assert all(c["region_id"] == "region_ke_nakuru" for c in reg_crops)
+
+
+def test_evaluate_layer1_models_and_logging(caplog):
+    import logging
+
+    cube = build_fallback_cube(8.3114, 80.4037)
+    metrics = evaluate_layer1_models(cube, train_months=24)
+    assert set(metrics.keys()) == {"precip_mm", "et_mm", "t2m_max_c"}
+    expected_metric_keys = {
+        "train_r2",
+        "test_r2",
+        "test_mae",
+        "test_rmse",
+        "season1_total_error_pct",
+        "cv_mean_mae",
+    }
+    for target, m in metrics.items():
+        assert set(m.keys()) == expected_metric_keys
+        assert m["test_mae"] >= 0.0
+        assert m["test_rmse"] >= m["test_mae"]
+        assert m["season1_total_error_pct"] >= 0.0
+        assert m["cv_mean_mae"] >= 0.0
+
+    with caplog.at_level(logging.INFO, logger="app.layer1_regression"):
+        run_layer1_regression(
+            cube=cube,
+            soil_type="soil_clay_loam",
+            current_crop="paddy_rice",
+            region_id="region_lk_dryzone",
+            store=lookup_store,
+        )
+
+    logged_targets = [rec.message for rec in caplog.records if "Layer1 Ridge eval" in rec.message]
+    assert len(logged_targets) == 3
+    assert any("target=precip_mm" in msg for msg in logged_targets)
+    assert any("target=et_mm" in msg for msg in logged_targets)
+    assert any("target=t2m_max_c" in msg for msg in logged_targets)
+

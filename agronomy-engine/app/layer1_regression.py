@@ -10,10 +10,13 @@ Runs fast Ridge / polynomial regression (`scikit-learn` + `numpy.polyfit`) on th
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
 import numpy as np
 from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
 
 from app.memory_store import InMemoryLookupStore, lookup_store
 from app.nasa_fusion import (
@@ -25,6 +28,8 @@ from app.nasa_fusion import (
     COL_T2M_MAX,
     FusedClimateCube,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -180,6 +185,65 @@ def _compute_vpd_and_frost(cube: FusedClimateCube) -> tuple[float | None, int]:
     return mean_vpd_kpa, frost_months
 
 
+def evaluate_layer1_models(
+    cube: FusedClimateCube,
+    train_months: int = 24,
+) -> dict[str, dict[str, float]]:
+    """Out-of-sample evaluation (24m train / 12m test + 3-fold TimeSeriesSplit CV) for Layer 1 Ridge models."""
+    mat = cube.matrix
+    n = mat.shape[0]
+    t = np.arange(n, dtype=np.float64)
+    X = _seasonal_design_matrix(t, cube.month_numbers)
+
+    targets: dict[str, tuple[np.ndarray, float | None]] = {
+        "precip_mm": (mat[:, COL_PRECIP], 5.0),
+        "et_mm": (mat[:, COL_ET], 20.0),
+        "t2m_max_c": (mat[:, COL_T2M_MAX], None),
+    }
+
+    results: dict[str, dict[str, float]] = {}
+    tscv = TimeSeriesSplit(n_splits=3)
+
+    for name, (y, clip_min) in targets.items():
+        X_tr, X_te = X[:train_months], X[train_months:]
+        y_tr, y_te = y[:train_months], y[train_months:]
+
+        model = Ridge(alpha=1.0).fit(X_tr, y_tr)
+        pred_tr = model.predict(X_tr)
+        pred_te = model.predict(X_te)
+        if clip_min is not None:
+            pred_tr = np.clip(pred_tr, clip_min, None)
+            pred_te = np.clip(pred_te, clip_min, None)
+
+        train_r2 = float(r2_score(y_tr, pred_tr))
+        test_r2 = float(r2_score(y_te, pred_te))
+        test_mae = float(mean_absolute_error(y_te, pred_te))
+        test_rmse = float(np.sqrt(mean_squared_error(y_te, pred_te)))
+
+        actual_s1 = float(np.sum(y_te[:6]))
+        pred_s1 = float(np.sum(pred_te[:6]))
+        season1_err_pct = float(abs(pred_s1 - actual_s1) / max(abs(actual_s1), 1e-6) * 100.0)
+
+        cv_maes: list[float] = []
+        for tr_idx, val_idx in tscv.split(X):
+            m_cv = Ridge(alpha=1.0).fit(X[tr_idx], y[tr_idx])
+            p_cv = m_cv.predict(X[val_idx])
+            if clip_min is not None:
+                p_cv = np.clip(p_cv, clip_min, None)
+            cv_maes.append(float(mean_absolute_error(y[val_idx], p_cv)))
+
+        results[name] = {
+            "train_r2": round(train_r2, 4),
+            "test_r2": round(test_r2, 4),
+            "test_mae": round(test_mae, 3),
+            "test_rmse": round(test_rmse, 3),
+            "season1_total_error_pct": round(season1_err_pct, 2),
+            "cv_mean_mae": round(float(np.mean(cv_maes)), 3),
+        }
+
+    return results
+
+
 def run_layer1_regression(
     cube: FusedClimateCube,
     soil_type: str,
@@ -230,6 +294,25 @@ def run_layer1_regression(
     ridge_solar = Ridge(alpha=1.0).fit(X_train, solar)
     ridge_t2m = Ridge(alpha=1.0).fit(X_train, t2m)
     ridge_smap = Ridge(alpha=1.0).fit(X_train, smap)
+
+    if cube.matrix.shape[0] >= 30:
+        eval_metrics = evaluate_layer1_models(cube)
+        for target_name, m in eval_metrics.items():
+            log.info(
+                "Layer1 Ridge eval target=%s lat=%.2f lon=%.2f source=%s "
+                "train_r2=%.4f test_r2=%.4f test_mae=%.3f test_rmse=%.3f "
+                "season1_total_error_pct=%.2f%% cv_mean_mae=%.3f",
+                target_name,
+                cube.lat,
+                cube.lon,
+                cube.source,
+                m["train_r2"],
+                m["test_r2"],
+                m["test_mae"],
+                m["test_rmse"],
+                m["season1_total_error_pct"],
+                m["cv_mean_mae"],
+            )
 
     pred_precip = np.clip(ridge_precip.predict(X_future), 5.0, None)
     pred_et = np.clip(ridge_et.predict(X_future), 20.0, None)
