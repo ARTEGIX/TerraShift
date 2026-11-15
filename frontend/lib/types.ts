@@ -184,11 +184,69 @@ export interface Farm {
   soil_type: string;
   current_crop: string;
   default_priority: Priority;
+  planting_month?: number;
   area_ha: number;
   centroid: Centroid;
   polygon: Polygon;
+  reports_count?: number;
+  projects_count?: number;
   created_at?: string;
   updated_at?: string;
+}
+
+/** Linked report summary returned by GET /api/farms/:id. */
+export interface FarmReportSummary {
+  id: string;
+  _id: string;
+  recommended_strategy: StrategyId;
+  climate_source: "nasa_power" | "fallback";
+  created_at: string;
+  current_crop?: string;
+  projects_count: number;
+}
+
+export interface FarmDetailResponse {
+  farm: Farm;
+  reports: FarmReportSummary[];
+}
+
+export interface ProjectSeason {
+  season_number?: number;
+  season: number;
+  season_label: string;
+  crop_id: string;
+  crop_name: string;
+  target_water_mm?: number;
+  input_cost_usd_ha?: number;
+  metrics: SeasonMetrics;
+}
+
+export interface Project {
+  id: string;
+  _id?: string;
+  name: string;
+  farm_id: string;
+  report_id: string;
+  selected_strategy: StrategyId;
+  seasons: ProjectSeason[];
+  totals: Strategy["totals"];
+  objectives: { f_soil: number; f_water: number; f_cost: number };
+  warnings: string[];
+  recalculation_count: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  farm: Pick<Farm, "_id" | "name" | "soil_type" | "current_crop" | "area_ha" | "centroid" | "polygon" | "planting_month"> & { id?: string } | null;
+  report: {
+    id: string;
+    _id: string;
+    recommended_strategy: StrategyId;
+    climate_source: "nasa_power" | "fallback";
+    created_at: string;
+  } | null;
 }
 
 /** Row from GET /api/simulation-runs. */
