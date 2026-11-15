@@ -31,8 +31,8 @@ def _parse_point(raw: str) -> tuple[float, float]:
 
 async def _run(points: list[tuple[float, float]]) -> int:
     settings = get_settings()
-    if not settings.earthdata_token:
-        log.error("EARTHDATA_TOKEN is empty. Set it in .env before running prefetch.")
+    if not settings.earthdata_token and not (settings.earthdata_username and settings.earthdata_password):
+        log.error("Set EARTHDATA_TOKEN or EARTHDATA_USERNAME/EARTHDATA_PASSWORD in .env before running prefetch.")
         return 1
 
     try:
