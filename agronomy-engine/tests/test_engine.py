@@ -916,8 +916,27 @@ def test_regional_lookup_ingestor_and_regions_ensure_endpoint(monkeypatch):
         crops_resp = client.get("/crops", params={"region_id": "region_ke_nakuru"})
         assert crops_resp.status_code == 200
         reg_crops = crops_resp.json()
-        assert len(reg_crops) == 12
-        assert all(c["region_id"] == "region_ke_nakuru" for c in reg_crops)
+        assert len(reg_crops) >= 6
+        assert all(c["region_id"] == "region_ke_nakuru" and c["viable"] is True for c in reg_crops)
+
+    # Verify temperate region filters out tropical-only crops and labels winter/summer seasons without Maha/Yala
+    assert all("Maha" not in lbl and "Yala" not in lbl for lbl in l1.season_labels)
+    assert any("Oct–Mar" in lbl for lbl in l1.season_labels)
+
+    temp_cube = build_fallback_cube(42.03, -93.63)
+    temp_cube.matrix[:, COL_T2M_MAX] = np.tile(
+        np.array([2.0, 4.0, 11.0, 18.0, 24.0, 29.0, 31.0, 30.0, 25.0, 18.0, 9.0, 3.0]), 3
+    )
+    temp_l1 = run_layer1_regression(
+        cube=temp_cube,
+        soil_type="soil_clay_loam",
+        current_crop="maize",
+        region_id="region_us_midwest",
+        planting_month=10,
+        store=test_store,
+    )
+    assert "Winter" in temp_l1.season_labels[0]
+    assert "Summer" in temp_l1.season_labels[1]
 
 
 def test_evaluate_layer1_models_and_logging(caplog):

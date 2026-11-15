@@ -69,6 +69,108 @@ SOIL_ALIASES: dict[str, str] = {
     "laterite": "soil_degraded_dry",
 }
 
+# Additional regional crops for temperate, subtropical, highland, and arid agro-zones
+REGIONAL_EXTRA_CROPS: list[dict[str, Any]] = [
+    {
+        "_id": "soybean",
+        "name": "Soybean",
+        "category": "legume",
+        "water_demand_mm": 480.0,
+        "drought_tolerance": 0.62,
+        "nitrogen_impact_kg_ha": 65.0,
+        "root_depth_cm": 90,
+        "growth_days": 115,
+        "erosion_cover_factor": 0.22,
+        "input_cost_usd_ha": 410.0,
+        "market_revenue_usd_ha": 1020.0,
+        "pest_family": "fabaceae",
+    },
+    {
+        "_id": "winter_wheat",
+        "name": "Winter Wheat",
+        "category": "cash_crop",
+        "water_demand_mm": 450.0,
+        "drought_tolerance": 0.68,
+        "nitrogen_impact_kg_ha": -85.0,
+        "root_depth_cm": 110,
+        "growth_days": 150,
+        "erosion_cover_factor": 0.20,
+        "input_cost_usd_ha": 380.0,
+        "market_revenue_usd_ha": 890.0,
+        "pest_family": "poaceae",
+    },
+    {
+        "_id": "potato",
+        "name": "Potato",
+        "category": "cash_crop",
+        "water_demand_mm": 520.0,
+        "drought_tolerance": 0.38,
+        "nitrogen_impact_kg_ha": -105.0,
+        "root_depth_cm": 50,
+        "growth_days": 105,
+        "erosion_cover_factor": 0.36,
+        "input_cost_usd_ha": 1250.0,
+        "market_revenue_usd_ha": 2480.0,
+        "pest_family": "solanaceae",
+    },
+    {
+        "_id": "sorghum",
+        "name": "Sorghum",
+        "category": "drought_tolerant",
+        "water_demand_mm": 360.0,
+        "drought_tolerance": 0.88,
+        "nitrogen_impact_kg_ha": -45.0,
+        "root_depth_cm": 130,
+        "growth_days": 105,
+        "erosion_cover_factor": 0.24,
+        "input_cost_usd_ha": 240.0,
+        "market_revenue_usd_ha": 640.0,
+        "pest_family": "poaceae",
+    },
+    {
+        "_id": "sunflower",
+        "name": "Sunflower",
+        "category": "drought_tolerant",
+        "water_demand_mm": 420.0,
+        "drought_tolerance": 0.78,
+        "nitrogen_impact_kg_ha": -50.0,
+        "root_depth_cm": 140,
+        "growth_days": 100,
+        "erosion_cover_factor": 0.28,
+        "input_cost_usd_ha": 310.0,
+        "market_revenue_usd_ha": 820.0,
+        "pest_family": "asteraceae",
+    },
+    {
+        "_id": "lentil",
+        "name": "Red Lentil",
+        "category": "legume",
+        "water_demand_mm": 310.0,
+        "drought_tolerance": 0.79,
+        "nitrogen_impact_kg_ha": 48.0,
+        "root_depth_cm": 70,
+        "growth_days": 95,
+        "erosion_cover_factor": 0.18,
+        "input_cost_usd_ha": 270.0,
+        "market_revenue_usd_ha": 740.0,
+        "pest_family": "fabaceae",
+    },
+    {
+        "_id": "crimson_clover",
+        "name": "Crimson Clover",
+        "category": "cover_crop",
+        "water_demand_mm": 260.0,
+        "drought_tolerance": 0.74,
+        "nitrogen_impact_kg_ha": 95.0,
+        "root_depth_cm": 85,
+        "growth_days": 70,
+        "erosion_cover_factor": 0.09,
+        "input_cost_usd_ha": 105.0,
+        "market_revenue_usd_ha": 160.0,
+        "pest_family": "fabaceae",
+    },
+]
+
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
@@ -201,6 +303,7 @@ class InMemoryLookupStore:
         self.soil_profiles: dict[str, dict[str, Any]] = {}
         self.regional_saturation: dict[str, dict[str, Any]] = {}
         self.regional_crops_by_region: dict[str, dict[str, dict[str, Any]]] = {}
+        self.all_candidate_crops_by_id: dict[str, dict[str, Any]] = {}
         self._load_from_seed()
 
     def _populate(
@@ -237,6 +340,36 @@ class InMemoryLookupStore:
             self.pest_family_ids,
             self.category_ids,
         ) = _pack_crop_arrays(list(global_crops.values()))
+
+        self.all_candidate_crops_by_id = dict(self.crops_by_id)
+        for extra_raw in REGIONAL_EXTRA_CROPS:
+            edoc = _normalize_crop_doc(extra_raw)
+            self.all_candidate_crops_by_id.setdefault(edoc["_id"], edoc)
+
+        # Ensure default seeded regions (`region_lk_dryzone`, `region_us_midwest`) have distinct regional crop sets
+        if "region_lk_dryzone" not in regional_crops:
+            lk_ids = ("paddy_rice", "mung_bean", "cowpea", "maize", "finger_millet", "groundnut", "sesame", "chilli", "onion", "sunn_hemp")
+            regional_crops["region_lk_dryzone"] = {
+                cid: _normalize_crop_doc({**self.all_candidate_crops_by_id[cid], "_id": f"region_lk_dryzone:{cid}", "region_id": "region_lk_dryzone", "viable": True})
+                for cid in lk_ids
+                if cid in self.all_candidate_crops_by_id
+            }
+        if "region_us_midwest" not in regional_crops:
+            us_ids = ("maize", "soybean", "winter_wheat", "potato", "sunflower", "lentil", "chickpea", "onion", "crimson_clover")
+            regional_crops["region_us_midwest"] = {
+                cid: _normalize_crop_doc(
+                    {
+                        **self.all_candidate_crops_by_id[cid],
+                        "_id": f"region_us_midwest:{cid}",
+                        "region_id": "region_us_midwest",
+                        "viable": True,
+                        "input_cost_usd_ha": round(float(self.all_candidate_crops_by_id[cid]["input_cost_usd_ha"]) * 1.38, 2),
+                        "market_revenue_usd_ha": round(float(self.all_candidate_crops_by_id[cid]["market_revenue_usd_ha"]) * 1.35, 2),
+                    }
+                )
+                for cid in us_ids
+                if cid in self.all_candidate_crops_by_id
+            }
 
         self.regional_crops_by_region = regional_crops
         self.soil_profiles = {str(s["_id"]): {**s, "id": str(s["_id"])} for s in soil_docs}
@@ -365,14 +498,20 @@ class InMemoryLookupStore:
 
         reg_map = self.regional_crops_by_region[region_id]
         merged: list[dict[str, Any]] = []
-        for cid, base_doc in self.crops_by_id.items():
-            doc = reg_map.get(cid, base_doc)
+        seen: set[str] = set()
+        for cid, doc in reg_map.items():
             if not viable_only or doc.get("viable", True) or (ensure_crop_id and cid == ensure_crop_id):
                 merged.append(doc)
+                seen.add(cid)
+
+        if ensure_crop_id and ensure_crop_id not in seen:
+            fallback_doc = self.all_candidate_crops_by_id.get(ensure_crop_id) or self.crops_by_id.get(ensure_crop_id)
+            if fallback_doc:
+                merged.append(fallback_doc)
 
         # Ensure at least 4 crops exist for GA evolution diversity
         if len(merged) < 4:
-            return [reg_map.get(cid, base_doc) for cid, base_doc in self.crops_by_id.items()]
+            return list(reg_map.values()) if len(reg_map) >= 4 else list(self.crops_by_id.values())
         return merged
 
     def for_region(
@@ -392,7 +531,9 @@ class InMemoryLookupStore:
             slug = slug[5:]
         if slug in self.crops_by_id:
             return slug
-        for cid, crop in self.crops_by_id.items():
+        if slug in self.all_candidate_crops_by_id:
+            return slug
+        for cid, crop in self.all_candidate_crops_by_id.items():
             name_slug = _slug(crop["name"])
             if name_slug.startswith(slug) or slug in name_slug:
                 return cid

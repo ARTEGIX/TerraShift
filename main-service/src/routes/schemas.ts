@@ -39,7 +39,7 @@ export const farmInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   polygon: polygonSchema,
   centroid: centroidSchema.optional(),
-  region_id: z.string().trim().optional().default("region_lk_dryzone"),
+  region_id: z.string().trim().optional(),
   soil_type: soilTypeSchema.default("soil_clay_loam"),
   current_crop: z.string().trim().min(1),
   default_priority: prioritySchema.default("water"),

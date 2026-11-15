@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Coins, Droplets, Pencil, Sprout } from "lucide-react";
+import { ArrowLeft, ArrowRight, Coins, Droplets, Pencil, RefreshCw, Sprout } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { ApiError, analyseFarm, createFarm, fetchCrops, getToken, prefetchSatellite } from "@/lib/api";
+import { ApiError, GENERAL_CROPS_FALLBACK, analyseFarm, createFarm, ensureRegion, fetchCrops, getToken, prefetchSatellite, resolveRegionalCropList } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
@@ -43,17 +43,52 @@ export default function FarmWizardPage() {
   const [draft, update, loaded] = useDraft();
   const [crops, setCrops] = useState<CropInfo[]>([]);
   const [cropsError, setCropsError] = useState<string | null>(null);
+  const [cropsFallbackMsg, setCropsFallbackMsg] = useState<string | null>(null);
+  const [refreshingCrops, setRefreshingCrops] = useState(false);
   const [tried, setTried] = useState<Record<number, boolean>>({});
   const [drawSignal, setDrawSignal] = useState(0);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  function loadCrops() {
+  async function loadCrops(regionId?: string | null, forceRefresh = false, preloadedViableIds?: string[] | null) {
     setCropsError(null);
-    fetchCrops()
-      .then(setCrops)
-      .catch((err: Error) => setCropsError(err.message));
+    setRefreshingCrops(true);
+    try {
+      let targetRegion = regionId ?? draft.regionId ?? undefined;
+      let viableIds = preloadedViableIds ?? null;
+      if ((forceRefresh || !targetRegion) && field?.centroid) {
+        const reg = await ensureRegion(field.centroid.lat, field.centroid.lon, draft.polygon ?? undefined, forceRefresh);
+        if (reg?.region_id) {
+          targetRegion = reg.region_id;
+          viableIds = reg.viable_crop_ids ?? viableIds;
+          update({
+            regionId: reg.region_id,
+            regionName: reg.region_name || null,
+            ...(draft.soilType ? {} : { soilType: reg.soil_type }),
+          });
+        }
+      }
+      const list = await fetchCrops(targetRegion, forceRefresh);
+      if (list && list.length > 0) {
+        const regionalList = resolveRegionalCropList(list, viableIds, field?.centroid?.lat, field?.centroid?.lon);
+        setCrops(regionalList);
+        setCropsFallbackMsg(null);
+        if (draft.currentCrop && !regionalList.some((c) => c.id === draft.currentCrop)) {
+          update({ currentCrop: null });
+        }
+      } else {
+        const fallbackList = resolveRegionalCropList(GENERAL_CROPS_FALLBACK, viableIds, field?.centroid?.lat, field?.centroid?.lon);
+        setCrops(fallbackList);
+        setCropsFallbackMsg("No regional crops returned from API — showing the general crop set.");
+      }
+    } catch {
+      const fallbackList = resolveRegionalCropList(GENERAL_CROPS_FALLBACK, preloadedViableIds, field?.centroid?.lat, field?.centroid?.lon);
+      setCrops(fallbackList);
+      setCropsFallbackMsg("Couldn't load regional crops from API — showing the general crop set.");
+    } finally {
+      setRefreshingCrops(false);
+    }
   }
   useEffect(() => {
     if (!getToken()) {
@@ -61,7 +96,7 @@ export default function FarmWizardPage() {
       return;
     }
     setAuthed(true);
-    loadCrops();
+    loadCrops(draft.regionId);
   }, [router]);
 
   const step = draft.step;
@@ -81,6 +116,22 @@ export default function FarmWizardPage() {
     }
     if (step === 0 && field?.centroid) {
       prefetchSatellite(field.centroid.lat, field.centroid.lon);
+      setRefreshingCrops(true);
+      try {
+        const reg = await ensureRegion(field.centroid.lat, field.centroid.lon, draft.polygon ?? undefined, true);
+        if (reg?.region_id) {
+          update({
+            regionId: reg.region_id,
+            regionName: reg.region_name || null,
+            ...(draft.soilType ? {} : { soilType: reg.soil_type }),
+          });
+          await loadCrops(reg.region_id, true, reg.viable_crop_ids);
+        } else {
+          await loadCrops(undefined, true);
+        }
+      } finally {
+        setRefreshingCrops(false);
+      }
     }
     if (step < 3) return goTo((step + 1) as FieldDraft["step"]);
     await run();
@@ -94,7 +145,7 @@ export default function FarmWizardPage() {
         name: draft.name.trim() || "My field",
         polygon: draft.polygon!,
         // centroid omitted: main-service computes an area-weighted one.
-        region_id: field?.centroid ? regionFor(field.centroid.lat) : undefined,
+        region_id: draft.regionId ?? (field?.centroid ? regionFor(field.centroid.lat) : undefined),
         soil_type: draft.soilType!,
         current_crop: draft.currentCrop!,
         default_priority: draft.priority!,
@@ -157,10 +208,10 @@ export default function FarmWizardPage() {
             <ArrowLeft className="size-5" aria-hidden /> Back
           </button>
         )}
-        <button type="button" onClick={next} disabled={running} className="btn-primary flex-[2]">
-          {running ? (
+        <button type="button" onClick={next} disabled={running || (step === 0 && refreshingCrops)} className="btn-primary flex-[2]">
+          {running || (step === 0 && refreshingCrops) ? (
             <>
-              <Spinner /> Working…
+              <Spinner /> {step === 0 && refreshingCrops ? "Loading regional crops…" : "Working…"}
             </>
           ) : step === 3 ? (
             <>
@@ -223,7 +274,11 @@ export default function FarmWizardPage() {
           <div className="sticky bottom-0 border-t border-black/[0.08] bg-canvas/85 px-5 py-3 backdrop-blur-xl">{footer}</div>
         </aside>
         <div className="relative h-[56vh] min-h-[24rem] w-full shrink-0 lg:h-auto lg:min-h-0 lg:flex-1">
-          <FarmMapLazy polygon={draft.polygon} onPolygonChange={(p) => update({ polygon: p })} drawSignal={drawSignal} />
+          <FarmMapLazy
+            polygon={draft.polygon}
+            onPolygonChange={(p) => update({ polygon: p, regionId: null, regionName: null })}
+            drawSignal={drawSignal}
+          />
         </div>
       </div>
     );
@@ -238,10 +293,30 @@ export default function FarmWizardPage() {
         {step === 1 && (
           <div className="space-y-8">
             <Question label="Which crop is in the field now?" error={errors.crop}>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                {cropsFallbackMsg ? (
+                  <p className="text-[13px] text-amber-700">{cropsFallbackMsg}</p>
+                ) : (
+                  <span className="text-[13px] text-ink-3">
+                    {draft.regionId
+                      ? `Showing crops suited for ${draft.regionName || "your region"} (${crops.length} regional crops)`
+                      : "Showing general crop catalog"}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void loadCrops(draft.regionId, true)}
+                  disabled={refreshingCrops}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 py-1.5 text-[13px] font-medium text-ink transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  <RefreshCw className={`size-3.5 ${refreshingCrops ? "animate-spin" : ""}`} aria-hidden />
+                  {refreshingCrops ? "Refreshing…" : "Refresh crops"}
+                </button>
+              </div>
               {cropsError && (
                 <Notice tone="error">
                   <p>Couldn&apos;t load the crop list. {cropsError}</p>
-                  <button type="button" onClick={loadCrops} className="btn-plain mt-1 text-[15px]">
+                  <button type="button" onClick={() => void loadCrops(draft.regionId, true)} className="btn-plain mt-1 text-[15px]">
                     Try again
                   </button>
                 </Notice>
@@ -274,7 +349,7 @@ export default function FarmWizardPage() {
             </Question>
             <Question
               label="When do you plant next?"
-              help="Maha is the main rainy season (planting around October). Yala is the drier season (planting around April). The plan covers three seasons from this month."
+              help="Pick the starting month for Season 1. The plan projects three consecutive 6-month growing seasons (including wet, dry, summer, or winter conditions for your region)."
             >
               <ChoiceCards
                 name="planting"

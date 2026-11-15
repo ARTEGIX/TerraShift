@@ -96,8 +96,8 @@ async def reload_lookup() -> dict[str, Any]:
 
 
 @app.get("/crops", tags=["reference"])
-async def crops(region_id: str | None = None) -> list[dict[str, Any]]:
-    return lookup_store.get_crops_for_region(region_id, viable_only=False)
+async def crops(region_id: str | None = None, include_unviable: bool = False) -> list[dict[str, Any]]:
+    return lookup_store.get_crops_for_region(region_id, viable_only=bool(region_id) and not include_unviable)
 
 
 @app.get("/soils", tags=["reference"])

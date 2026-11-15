@@ -59,10 +59,10 @@ export const MONTHS_LONG = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-/** Common planting starts in Sri Lanka. The engine labels Sep–Feb starts as Maha. */
+/** Universal 6-month planting start windows (or user can pick any calendar month 1..12). */
 export const PLANTING_PRESETS = [
-  { month: 10, label: "Maha season", hint: "Start in October" },
-  { month: 4, label: "Yala season", hint: "Start in April" },
+  { month: 10, label: "Oct – Mar window", hint: "Start in October" },
+  { month: 4, label: "Apr – Sep window", hint: "Start in April" },
 ];
 
 export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
@@ -80,8 +80,8 @@ export function monthLabel(ym: string, long = false): string {
   return `${(long ? MONTHS_LONG : MONTHS)[m - 1]} ${y}`;
 }
 
-/** "Season 2 (Yala)" → "Yala" */
-export const seasonName = (label: string) => label.match(/\((\w+)\)/)?.[1] ?? label;
+/** "Season 2 (Apr–Sep · Dry)" → "Apr–Sep · Dry" */
+export const seasonName = (label: string) => label.match(/\(([^)]+)\)/)?.[1] ?? label;
 
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 export const usd = (n: number) => usdFmt.format(Math.round(n));

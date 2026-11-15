@@ -48,30 +48,66 @@ FAO_CROP_KEYWORDS: dict[str, tuple[str, ...]] = {
     "mung_bean": ("beans, dry", "mung", "green gram", "pulses"),
     "cowpea": ("cow peas", "cowpea"),
     "maize": ("maize", "corn"),
-    "finger_millet": ("millet", "sorghum"),
+    "finger_millet": ("millet",),
     "groundnut": ("groundnuts", "peanuts"),
     "sesame": ("sesame seed", "sesame"),
     "chilli": ("chillies and peppers", "peppers", "chilli"),
     "onion": ("onions and shallots", "onions"),
-    "sunn_hemp": ("hemp", "forage", "clover"),
+    "sunn_hemp": ("hemp", "forage"),
     "chickpea": ("chick peas", "chickpea"),
     "cassava": ("cassava", "manioc", "yuca"),
+    "soybean": ("soya beans", "soybeans", "soybean"),
+    "winter_wheat": ("wheat",),
+    "potato": ("potatoes", "potato"),
+    "sorghum": ("sorghum",),
+    "sunflower": ("sunflower seed", "sunflower"),
+    "lentil": ("lentils", "lentil"),
+    "crimson_clover": ("clover", "alfalfa", "vetch"),
 }
 
 # Thermal limits (min_temp_c, max_temp_c) for agro-climatic crop viability filtering
 CROP_THERMAL_LIMITS: dict[str, tuple[float, float]] = {
-    "paddy_rice": (10.0, 42.0),
+    "paddy_rice": (14.0, 42.0),
     "mung_bean": (12.0, 42.0),
     "cowpea": (12.0, 44.0),
     "maize": (5.0, 42.0),
-    "finger_millet": (8.0, 44.0),
-    "groundnut": (10.0, 42.0),
-    "sesame": (12.0, 45.0),
+    "finger_millet": (10.0, 44.0),
+    "groundnut": (12.0, 42.0),
+    "sesame": (14.0, 45.0),
     "chilli": (10.0, 40.0),
-    "onion": (2.0, 38.0),
-    "sunn_hemp": (8.0, 43.0),
-    "chickpea": (2.0, 38.0),
-    "cassava": (14.0, 44.0),
+    "onion": (0.0, 38.0),
+    "sunn_hemp": (10.0, 43.0),
+    "chickpea": (0.0, 38.0),
+    "cassava": (15.0, 44.0),
+    "soybean": (4.0, 40.0),
+    "winter_wheat": (-8.0, 34.0),
+    "potato": (2.0, 32.0),
+    "sorghum": (10.0, 45.0),
+    "sunflower": (4.0, 40.0),
+    "lentil": (-2.0, 35.0),
+    "crimson_clover": (-5.0, 34.0),
+}
+
+# Canonical regional crop sets by Agro-Ecological Zone
+AEZ_VIABLE_CROPS: dict[str, set[str]] = {
+    "temperate": {
+        "maize", "soybean", "winter_wheat", "potato", "sunflower", "lentil", "chickpea", "onion", "crimson_clover"
+    },
+    "subtropical": {
+        "maize", "soybean", "winter_wheat", "chickpea", "groundnut", "chilli", "onion", "sunflower", "mung_bean", "sunn_hemp"
+    },
+    "arid_semiarid": {
+        "sorghum", "finger_millet", "sesame", "chickpea", "cowpea", "groundnut", "sunflower", "onion", "sunn_hemp"
+    },
+    "tropical_highland": {
+        "potato", "maize", "onion", "chilli", "mung_bean", "cowpea", "lentil", "chickpea", "crimson_clover"
+    },
+    "tropical_humid": {
+        "paddy_rice", "cassava", "maize", "mung_bean", "cowpea", "groundnut", "chilli", "sunn_hemp"
+    },
+    "tropical_wet_dry": {
+        "paddy_rice", "maize", "mung_bean", "cowpea", "groundnut", "finger_millet", "sesame", "chilli", "onion", "sunn_hemp"
+    },
 }
 
 # Country / Agro-Zone baseline PPP multipliers (1.0 = developing smallholder baseline, >1.8 = high-income mechanized)
@@ -105,9 +141,10 @@ COUNTRY_PPP_FALLBACK: dict[str, float] = {
 AEZ_SATURATION_FALLBACK: dict[str, list[str]] = {
     "tropical_wet_dry": ["paddy_rice", "maize", "onion"],
     "tropical_humid": ["paddy_rice", "cassava", "maize"],
-    "arid_semiarid": ["finger_millet", "sesame", "groundnut"],
-    "subtropical": ["maize", "chilli", "onion"],
-    "temperate": ["maize", "onion", "chickpea"],
+    "tropical_highland": ["potato", "maize", "onion"],
+    "arid_semiarid": ["sorghum", "finger_millet", "sesame"],
+    "subtropical": ["maize", "winter_wheat", "soybean"],
+    "temperate": ["maize", "soybean", "winter_wheat"],
 }
 
 
@@ -115,15 +152,17 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
 
 
-def classify_agro_zone(lat: float, mean_annual_precip_mm: float = 1100.0) -> str:
+def classify_agro_zone(lat: float, mean_annual_precip_mm: float = 1100.0, mean_tmax_c: float = 30.0) -> str:
     abs_lat = abs(float(lat))
-    if abs_lat > 32.0:
+    if abs_lat > 31.0 or mean_tmax_c < 20.0:
         return "temperate"
     if abs_lat > 23.5:
-        return "subtropical" if mean_annual_precip_mm >= 650.0 else "arid_semiarid"
-    if mean_annual_precip_mm < 600.0:
+        return "subtropical" if mean_annual_precip_mm >= 600.0 else "arid_semiarid"
+    if mean_tmax_c < 27.5:
+        return "tropical_highland"
+    if mean_annual_precip_mm < 650.0:
         return "arid_semiarid"
-    if mean_annual_precip_mm > 1750.0:
+    if mean_annual_precip_mm > 1700.0:
         return "tropical_humid"
     return "tropical_wet_dry"
 
@@ -176,7 +215,7 @@ async def resolve_region_metadata(lat: float, lon: float) -> dict[str, Any]:
 
     # 1. Primary: BigDataCloud Free Reverse Geocode API (no API key required)
     try:
-        async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=min(2.5, settings.external_timeout_seconds)) as client:
             resp = await client.get(
                 settings.reverse_geocode_base_url,
                 params={"latitude": rlat, "longitude": rlon, "localityLanguage": "en"},
@@ -204,7 +243,7 @@ async def resolve_region_metadata(lat: float, lon: float) -> dict[str, Any]:
     # 2. Secondary: OpenStreetMap Nominatim Reverse Geocode API (no API key required)
     try:
         async with httpx.AsyncClient(
-            timeout=settings.external_timeout_seconds,
+            timeout=min(2.5, settings.external_timeout_seconds),
             headers={"User-Agent": "TerraShift-Agronomy-Engine/0.2 (open-source research)"},
         ) as client:
             resp = await client.get(
@@ -249,50 +288,52 @@ async def fetch_external_country_ag_stats(country_iso2: str) -> dict[str, Any]:
     revenue_mult_by_crop: dict[str, float] = {}
     sources_used: list[str] = []
 
-    # 1. World Bank Open Data API — PPP conversion factor / price level ratio (Free, no key)
+    # 1. World Bank Open Data API & 2. FAOSTAT Public API (run in parallel with tight 3.5s timeout)
     if iso2 != "UN" and len(iso2) == 2:
-        try:
-            wb_url = f"{settings.worldbank_base_url}/country/{iso2.lower()}/indicator/PA.NUS.PPPC.RF"
-            async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
-                resp = await client.get(wb_url, params={"format": "json", "per_page": 5})
-                resp.raise_for_status()
-                payload = resp.json()
-                if isinstance(payload, list) and len(payload) >= 2 and isinstance(payload[1], list):
-                    for row in payload[1]:
-                        val = row.get("value")
-                        if val is not None and float(val) > 0:
-                            # Convert price level ratio (US=1.0) into smallholder vs mechanized scaling (0.75 .. 2.25)
-                            ppp_factor = round(float(np.clip(0.65 + 1.45 * float(val), 0.75, 2.25)), 3)
-                            sources_used.append("worldbank_ppp")
-                            break
-        except Exception as exc:  # noqa: BLE001
-            log.info("World Bank PPP fetch skipped for %s: %r", iso2, exc)
-
-    # 2. FAOSTAT Public API — Area Harvested (QCL) & Producer Prices (PP)
-    if iso2 != "UN" and len(iso2) == 2:
-        try:
-            async with httpx.AsyncClient(timeout=settings.external_timeout_seconds) as client:
-                resp = await client.get(
-                    f"{settings.faostat_base_url}/QCL",
-                    params={"area_cs": "ISO2", "area": iso2, "year": "2022,2023"},
-                )
-                if resp.status_code == 200:
-                    rows = (resp.json() or {}).get("data") or []
-                    for r in rows:
-                        item_name = str(r.get("Item") or "").lower()
-                        elem_name = str(r.get("Element") or "").lower()
-                        val = r.get("Value")
-                        if val is None:
-                            continue
-                        for cid, kw_tuple in FAO_CROP_KEYWORDS.items():
-                            if any(kw in item_name for kw in kw_tuple):
-                                if "area harvested" in elem_name:
-                                    harvested_area_ha[cid] = max(harvested_area_ha.get(cid, 0.0), float(val))
+        async def _fetch_wb() -> None:
+            nonlocal ppp_factor
+            try:
+                wb_url = f"{settings.worldbank_base_url}/country/{iso2.lower()}/indicator/PA.NUS.PPPC.RF"
+                async with httpx.AsyncClient(timeout=3.5) as client:
+                    resp = await client.get(wb_url, params={"format": "json", "per_page": 5})
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    if isinstance(payload, list) and len(payload) >= 2 and isinstance(payload[1], list):
+                        for row in payload[1]:
+                            val = row.get("value")
+                            if val is not None and float(val) > 0:
+                                ppp_factor = round(float(np.clip(0.65 + 1.45 * float(val), 0.75, 2.25)), 3)
+                                sources_used.append("worldbank_ppp")
                                 break
-                    if harvested_area_ha:
-                        sources_used.append("faostat_qcl")
-        except Exception as exc:  # noqa: BLE001
-            log.info("FAOSTAT QCL fetch skipped for %s: %r", iso2, exc)
+            except Exception as exc:  # noqa: BLE001
+                log.info("World Bank PPP fetch skipped for %s: %r", iso2, exc)
+
+        async def _fetch_fao() -> None:
+            try:
+                async with httpx.AsyncClient(timeout=3.5) as client:
+                    resp = await client.get(
+                        f"{settings.faostat_base_url}/QCL",
+                        params={"area_cs": "ISO2", "area": iso2, "year": "2022"},
+                    )
+                    if resp.status_code == 200:
+                        rows = (resp.json() or {}).get("data") or []
+                        for r in rows:
+                            item_name = str(r.get("Item") or "").lower()
+                            elem_name = str(r.get("Element") or "").lower()
+                            val = r.get("Value")
+                            if val is None:
+                                continue
+                            for cid, kw_tuple in FAO_CROP_KEYWORDS.items():
+                                if any(kw in item_name for kw in kw_tuple):
+                                    if "area harvested" in elem_name:
+                                        harvested_area_ha[cid] = max(harvested_area_ha.get(cid, 0.0), float(val))
+                                    break
+                        if harvested_area_ha:
+                            sources_used.append("faostat_qcl")
+            except Exception as exc:  # noqa: BLE001
+                log.info("FAOSTAT QCL fetch skipped for %s: %r", iso2, exc)
+
+        await asyncio.gather(_fetch_wb(), _fetch_fao())
 
     result = {
         "country_iso2": iso2,
@@ -353,20 +394,39 @@ def build_regional_crops_catalog(
     mean_tmax = float(np.mean(mat[:, COL_T2M_MAX]))
     peak_tmax = float(np.max(mat[:, COL_T2M_MAX]))
     mean_et_monthly = float(np.mean(mat[:, COL_ET]))
+    annual_precip_mm = float(np.sum(mat[:, COL_PRECIP]) / max(1.0, mat.shape[0] / 12.0))
+    agro_zone = classify_agro_zone(cube.lat, annual_precip_mm, mean_tmax)
     raw_tmin = (cube.extra_series or {}).get("t2m_min_c")
     min_tmin = float(np.min(raw_tmin)) if isinstance(raw_tmin, list) and raw_tmin else (mean_tmax - 11.0)
+    harvested_map: dict[str, float] = ag_stats.get("harvested_area_ha") or {}
 
     # Evapotranspiration water demand scaling relative to tropical reference (135 mm/month)
     et_demand_mult = float(np.clip(mean_et_monthly / 135.0, 0.78, 1.28))
     soil_ph = soil_doc.get("ph")
 
+    zone_allowed = set(AEZ_VIABLE_CROPS.get(agro_zone, AEZ_VIABLE_CROPS["tropical_wet_dry"]))
+    # Also include top FAOSTAT-confirmed crops for this country if thermally compatible
+    if harvested_map:
+        total_harv = sum(harvested_map.values()) or 1.0
+        for cid, harv_ha in harvested_map.items():
+            if (harv_ha / total_harv) >= 0.04 or harv_ha >= 35_000.0:
+                zone_allowed.add(cid)
+
+    candidate_pool = getattr(store, "all_candidate_crops_by_id", None) or store.crops_by_id
+
     regional_crops: list[dict[str, Any]] = []
-    for cid in store.crop_ids:
-        base = store.crops_by_id[cid]
+    for cid, base in candidate_pool.items():
         tmin_limit, tmax_limit = CROP_THERMAL_LIMITS.get(cid, (5.0, 42.0))
 
-        # Check thermal & frost viability in this region
-        viable = bool(min_tmin >= (tmin_limit - 3.0) and peak_tmax <= (tmax_limit + 3.0))
+        # Check agro-zone membership + thermal bounds
+        thermally_ok = bool(min_tmin >= (tmin_limit - 3.0) and peak_tmax <= (tmax_limit + 4.0))
+        viable = bool(cid in zone_allowed and thermally_ok)
+        if agro_zone == "temperate" and cid in {"cassava", "paddy_rice", "finger_millet", "sesame", "sunn_hemp"}:
+            viable = False
+        if agro_zone == "arid_semiarid" and cid in {"paddy_rice", "cassava", "potato"}:
+            viable = False
+        if agro_zone == "tropical_highland" and cid in {"paddy_rice", "cassava", "sesame"}:
+            viable = False
 
         # Adjust water demand by local evaporative demand (ET)
         adj_water_mm = round(float(base["water_demand_mm"]) * et_demand_mult, 1)
@@ -375,7 +435,7 @@ def build_regional_crops_catalog(
         climate_rev_bonus = 1.0
         if cid in ("paddy_rice", "cassava", "mung_bean", "cowpea") and min_tmin > 16.0:
             climate_rev_bonus = 1.06
-        elif cid in ("maize", "chickpea", "onion") and 8.0 <= min_tmin <= 20.0:
+        elif cid in ("maize", "chickpea", "onion", "soybean", "winter_wheat", "potato") and 4.0 <= min_tmin <= 20.0:
             climate_rev_bonus = 1.08
 
         if soil_ph is not None and (float(soil_ph) < 5.2 or float(soil_ph) > 8.0) and base.get("category") == "legume":
@@ -521,26 +581,31 @@ async def ensure_region_in_lookup_db(
             "cached": True,
         }
 
-    # Fetch climate cube, SoilGrids, terrain, and external FAOSTAT/World Bank stats in parallel
-    try:
-        cube, soilgrids, terrain, ag_stats = await asyncio.gather(
-            fetch_fused_climate(lat, lon),
-            fetch_soilgrids_profile(lat, lon),
-            fetch_terrain_profile(lat, lon, polygon_ring),
+    async def _timed(coro: Any, timeout_s: float, default_val: Any) -> Any:
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_s)
+        except Exception as exc:  # noqa: BLE001
+            log.info("Regional sub-fetch timed out or degraded (%r) — using fallback.", exc)
+            return default_val
+
+    # Fetch climate cube, SoilGrids, terrain, and external FAOSTAT/World Bank stats in parallel with bounded timeouts
+    cube, soilgrids, terrain, ag_stats = await asyncio.gather(
+        _timed(fetch_fused_climate(lat, lon), 6.0, build_fallback_cube(lat, lon)),
+        _timed(fetch_soilgrids_profile(lat, lon), 4.0, None),
+        _timed(fetch_terrain_profile(lat, lon, polygon_ring), 3.5, None),
+        _timed(
             fetch_external_country_ag_stats(region_meta.get("country_iso2", "UN")),
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Parallel regional ingestion degraded for %s (%r) — using deterministic fallback.", region_id, exc)
-        cube = build_fallback_cube(lat, lon)
-        soilgrids = None
-        terrain = None
-        ag_stats = {"country_iso2": region_meta.get("country_iso2", "UN"), "ppp_factor": 1.0, "source": "fallback"}
+            4.0,
+            {"country_iso2": region_meta.get("country_iso2", "UN"), "ppp_factor": 1.0, "source": "fallback"},
+        ),
+    )
 
     soil_doc = build_regional_soil_profile(region_id, region_meta["name"], soilgrids, terrain, store=store)
     regional_crops = build_regional_crops_catalog(region_meta, ag_stats, cube, soil_doc, store=store)
     region_doc = build_regional_saturation_profile(region_meta, ag_stats, cube, soil_doc, regional_crops)
 
-    store.upsert_region_bundle(
+    await asyncio.to_thread(
+        store.upsert_region_bundle,
         region_doc=region_doc,
         soil_doc=soil_doc,
         regional_crops=regional_crops,

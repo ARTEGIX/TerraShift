@@ -38,7 +38,7 @@ class Layer1RegressionOutput:
 
     overall_risk_score: float
     season_water_budgets_mm: np.ndarray          # shape (3,), float64 — Season 1, 2, 3 available water (mm)
-    season_labels: list[str]                     # ["Season 1 (Maha)", "Season 2 (Yala)", "Season 3 (Maha)"]
+    season_labels: list[str]                     # ["Season 1 (Oct–Mar · Wet)", "Season 2 (Apr–Sep · Dry)", ...]
     october_moisture_anomaly_pct: float          # projected Oct root-zone soil moisture anomaly (%)
     moisture_trend_slope_per_yr: float           # mm/month per year slope from np.polyfit
     moisture_r2: float
@@ -110,6 +110,37 @@ class Layer1RegressionOutput:
                 "oversupply_penalty_pct": 22.0 if crop_is_oversupplied else 0.0,
             },
         }
+
+
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _build_season_label(
+    season_idx: int,
+    start_month: int,
+    end_month: int,
+    lat: float,
+    season_rain_mm: float,
+    mean_6m_rain_mm: float,
+    season_tmax_c: float,
+) -> str:
+    """Build universal month-span + climate regime label (supports Wet/Dry & Winter/Summer/Warm/Cool)."""
+    span = f"{_MONTH_ABBR[(start_month - 1) % 12]}–{_MONTH_ABBR[(end_month - 1) % 12]}"
+    if abs(float(lat)) > 23.5:
+        if season_tmax_c < 16.0:
+            regime = "Winter"
+        elif season_tmax_c < 23.0:
+            regime = "Cool"
+        else:
+            regime = "Summer"
+    else:
+        if mean_6m_rain_mm > 0 and season_rain_mm >= mean_6m_rain_mm * 1.12:
+            regime = "Wet"
+        elif mean_6m_rain_mm > 0 and season_rain_mm <= mean_6m_rain_mm * 0.88:
+            regime = "Dry"
+        else:
+            regime = "Warm"
+    return f"Season {season_idx + 1} ({span} · {regime})"
 
 
 def _seasonal_design_matrix(t_idx: np.ndarray, month_numbers: np.ndarray) -> np.ndarray:
@@ -340,6 +371,7 @@ def run_layer1_regression(
 
     vpd_evap_mult = 1.0 + max(0.0, ((mean_vpd_kpa or 0.0) - 1.6) * 0.12)
     esi_water_mult = 0.90 if (mean_esi is not None and mean_esi < 0.45) else 1.0
+    mean_6m_rain = float(np.mean(pred_precip[:12]) * 6.0)
     for s in range(3):
         sl = slice(s * 6, (s + 1) * 6)
         ridge_rain = float(np.sum(pred_precip[sl]))
@@ -356,8 +388,18 @@ def run_layer1_regression(
         season_tmax_c[s] = float(np.mean(pred_t2m[sl]))
         season_solar_kwh[s] = float(np.mean(pred_solar[sl]))
         first_m = int(future_months[s * 6])
-        label_name = "Maha" if first_m in (9, 10, 11, 12, 1, 2) else "Yala"
-        season_labels.append(f"Season {s + 1} ({label_name})")
+        last_m = int(future_months[s * 6 + 5])
+        season_labels.append(
+            _build_season_label(
+                season_idx=s,
+                start_month=first_m,
+                end_month=last_m,
+                lat=cube.lat,
+                season_rain_mm=ridge_rain,
+                mean_6m_rain_mm=mean_6m_rain,
+                season_tmax_c=season_tmax_c[s],
+            )
+        )
 
     # 2. Planting-month root-zone soil moisture anomaly (%) via np.polyfit over historical planting months + SMAP series
     target_month = int(np.clip(planting_month, 1, 12))
