@@ -355,14 +355,16 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
     monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
     monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
 
-    months = appeears_client.target_36_months()
+    # Simulate a pending task created in an earlier year window (2022-2024)
+    old_months = [f"{y:04d}-{m:02d}" for y in (2022, 2023, 2024) for m in range(1, 13)]
     modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n" + "\n".join(
-        f"id,8.31,80.40,{m}-01,0.55" for m in months
+        f"id,8.31,80.40,{m}-01,0.55" for m in old_months
     )
     eco_csv = "ID,Latitude,Longitude,Date,ECO_L4T_ESI_002_ESI\n" + "\n".join(
-        f"id,8.31,80.40,{m}-01,0.72" for m in months
+        f"id,8.31,80.40,{m}-01,0.72" for m in old_months
     )
     post_calls = 0
+    get_calls = 0
 
     class FakeResp:
         def __init__(self, status_code: int, payload=None, text: str = ""):
@@ -393,6 +395,8 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
             return FakeResp(200, {"task_id": "task-123"})
 
         async def get(self, url, **_kwargs):
+            nonlocal get_calls
+            get_calls += 1
             if url.endswith("/task/task-123"):
                 return FakeResp(200, {"status": "done"})
             if url.endswith("/bundle/task-123"):
@@ -413,13 +417,20 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
 
     monkeypatch.setattr(appeears_client.httpx, "AsyncClient", FakeClient)
 
-    # Pre-populate pending task in Redis -> should NOT POST a duplicate task
+    # Pre-populate pending task in Redis with old_months
     _, _, pending_key = appeears_client.appeears_pending_key(8.31, 80.40)
-    fake_redis[pending_key] = {"task_id": "task-123", "months": months}
+    fake_redis[pending_key] = {"task_id": "task-123", "months": old_months}
 
-    res = asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40))
+    # Hot /predict path should remain non-blocking (no HTTP calls)
+    assert asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40)) is None
+    assert get_calls == 0
+    assert post_calls == 0
+
+    # Background prefetch resumes task-123 with old_months and does NOT POST a duplicate task
+    res = asyncio.run(appeears_client.prefetch_appeears_point(8.31, 80.40, poll_interval_s=0.01, timeout_s=1.0))
     assert res is not None
     assert post_calls == 0
+    assert res["months"] == old_months
     assert pending_key not in fake_redis
     _, _, cache_key = appeears_client.appeears_cache_key(8.31, 80.40)
     assert cache_key in fake_redis

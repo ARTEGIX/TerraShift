@@ -296,13 +296,21 @@ async def prefetch_appeears_point(
     if existing and ("smap_moisture_pct" in existing or "ndvi" in existing):
         return existing
 
-    months = target_36_months()
-    start_year = int(months[0][:4])
-    end_year = int(months[-1][:4])
-
     base = settings.appeears_base_url.rstrip("/")
     pending = await cache.get_json(pending_key)
     task_id = str(pending.get("task_id")) if isinstance(pending, dict) and pending.get("task_id") else None
+    raw_months = pending.get("months") if isinstance(pending, dict) else None
+    if (
+        task_id
+        and isinstance(raw_months, list)
+        and len(raw_months) == 36
+        and all(isinstance(m, str) and len(m) == 7 for m in raw_months)
+    ):
+        months = list(raw_months)
+    else:
+        months = target_36_months()
+    start_year = int(months[0][:4])
+    end_year = int(months[-1][:4])
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         headers = await _auth_headers(client, base)
@@ -357,44 +365,11 @@ async def prefetch_appeears_point(
 
 
 async def get_cached_appeears_series(lat: float, lon: float) -> dict[str, Any] | None:
-    """Read pre-fetched AppEEARS series from Redis, or finalize a completed pending task."""
-    rlat, rlon, key = appeears_cache_key(lat, lon)
+    """Read pre-fetched AppEEARS SMAP + MODIS series from Redis without blocking."""
+    _, _, key = appeears_cache_key(lat, lon)
     payload = await cache.get_json(key)
     if payload and ("smap_moisture_pct" in payload or "ndvi" in payload):
         return payload
-
-    if not _has_credentials():
-        return None
-
-    _, _, pending_key = appeears_pending_key(rlat, rlon)
-    pending = await cache.get_json(pending_key)
-    if not isinstance(pending, dict) or not pending.get("task_id"):
-        return None
-
-    task_id = str(pending["task_id"])
-    months = pending.get("months") if isinstance(pending.get("months"), list) else target_36_months()
-    settings = get_settings()
-    base = settings.appeears_base_url.rstrip("/")
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-            headers = await _auth_headers(client, base)
-            status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
-            if status_resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
-                headers = await _auth_headers(client, base, force_refresh=True)
-                status_resp = await client.get(f"{base}/task/{task_id}", headers=headers)
-            if status_resp.status_code in {404, 410}:
-                await cache.delete_key(pending_key)
-                return None
-            status_resp.raise_for_status()
-            status = status_resp.json().get("status", "")
-            if status == "done":
-                log.info("Pending AppEEARS task %s is done; downloading bundle now", task_id)
-                return await _download_and_cache_bundle(client, base, headers, task_id, key, pending_key, months)
-            if status in {"error", "expired"}:
-                await cache.delete_key(pending_key)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Quick status check failed for pending AppEEARS task %s: %r", task_id, exc)
     return None
 
 
