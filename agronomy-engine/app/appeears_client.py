@@ -373,6 +373,26 @@ async def get_cached_appeears_series(lat: float, lon: float) -> dict[str, Any] |
     return None
 
 
+async def get_appeears_status(lat: float, lon: float) -> dict[str, Any]:
+    """Return current AppEEARS cache/pending status for `(lat, lon)` without blocking."""
+    rlat, rlon, key = appeears_cache_key(lat, lon)
+    payload = await cache.get_json(key)
+    if payload and ("smap_moisture_pct" in payload or "ndvi" in payload):
+        return {"status": "ready", "grid_key": key}
+
+    _, _, pending_key = appeears_pending_key(rlat, rlon)
+    pending = await cache.get_json(pending_key)
+    if isinstance(pending, dict) and pending.get("task_id"):
+        if key not in _inflight_keys:
+            trigger_background_prefetch(rlat, rlon)
+        return {"status": "pending", "grid_key": key}
+
+    if key in _inflight_keys:
+        return {"status": "pending", "grid_key": key}
+
+    return {"status": "not_started", "grid_key": key}
+
+
 def trigger_background_prefetch(lat: float, lon: float) -> bool:
     """Schedule a deduplicated background AppEEARS fetch when credentials are set."""
     if not _has_credentials():

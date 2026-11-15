@@ -5,6 +5,7 @@ import { validateBody } from "../middleware/validate";
 import { Farm, type IFarm } from "../models/Farm";
 import { Project } from "../models/Project";
 import { SimulationRun } from "../models/SimulationRun";
+import { prefetchSatellite } from "../services/agronomyClient";
 import type { Polygon } from "../types/contract";
 import { HttpError } from "../utils/HttpError";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -104,6 +105,7 @@ router.post(
     if (mongoReady()) {
       await Farm.findByIdAndUpdate(farmDoc._id, farmDoc, { upsert: true, new: true });
     }
+    void prefetchSatellite(farmDoc.centroid.lat, farmDoc.centroid.lon);
     res.status(201).json({ farm: farmDoc });
   }),
 );

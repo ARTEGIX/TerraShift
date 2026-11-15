@@ -4,7 +4,7 @@ import { mongoReady } from "../db/mongo";
 import { validateBody } from "../middleware/validate";
 import { Project } from "../models/Project";
 import { SimulationRun, type ISimulationRun } from "../models/SimulationRun";
-import { predict } from "../services/agronomyClient";
+import { getSatelliteStatus, predict, prefetchSatellite } from "../services/agronomyClient";
 import { explainSimulation } from "../services/llmExplainer";
 import type { Polygon, PredictRequest } from "../types/contract";
 import { HttpError } from "../utils/HttpError";
@@ -145,6 +145,77 @@ router.get(
     }
     const list = Array.from(memoryRuns.values()).filter((r) => !farmId || r.farm_id === farmId);
     res.json({ simulation_runs: list, analyses: list });
+  }),
+);
+
+/** POST /api/analyses/prefetch — trigger non-blocking satellite prefetch for a coordinate */
+router.post(
+  "/prefetch",
+  asyncHandler(async (req, res) => {
+    const lat = Number(req.body?.lat);
+    const lon = Number(req.body?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      throw HttpError.badRequest("Valid lat and lon are required");
+    }
+    void prefetchSatellite(lat, lon);
+    res.status(202).json({ ok: true });
+  }),
+);
+
+/** GET /api/simulation-runs/:id/satellite-status */
+router.get(
+  "/:id/satellite-status",
+  asyncHandler(async (req, res) => {
+    const existing = await findRunById(req.params.id);
+    if (!existing) throw HttpError.notFound(`Simulation run '${req.params.id}' not found`);
+    const { lat, lon } = existing.prediction.location;
+    const sat = await getSatelliteStatus(lat, lon);
+    res.json({
+      status: sat.status,
+      climate_source: existing.prediction.climate.source,
+    });
+  }),
+);
+
+/** POST /api/simulation-runs/:id/upgrade — re-run with cached satellite data and update in place */
+router.post(
+  "/:id/upgrade",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    const existing = await findRunById(id);
+    if (!existing) throw HttpError.notFound(`Simulation run '${id}' not found`);
+
+    const prediction = await predict(existing.request);
+    const explanation = await explainSimulation(prediction);
+    const now = new Date();
+
+    if (memoryRuns.has(id)) {
+      const mem = memoryRuns.get(id)!;
+      memoryRuns.set(id, {
+        ...mem,
+        prediction,
+        explanation,
+        recommended_strategy: prediction.recommended_strategy,
+        climate_source: prediction.climate.source,
+        updated_at: now,
+      });
+    }
+    if (mongoReady()) {
+      await SimulationRun.findByIdAndUpdate(id, {
+        prediction,
+        explanation,
+        recommended_strategy: prediction.recommended_strategy,
+        climate_source: prediction.climate.source,
+      });
+    }
+
+    res.json({
+      id,
+      farm_id: existing.farm_id ?? null,
+      prediction,
+      explanation,
+      createdAt: existing.created_at instanceof Date ? existing.created_at.toISOString() : String(existing.created_at),
+    });
   }),
 );
 
