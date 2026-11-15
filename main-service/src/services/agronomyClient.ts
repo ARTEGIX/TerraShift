@@ -61,3 +61,32 @@ export async function projectRecalculate(body: ProjectRecalcRequest): Promise<Pr
   }
   return (await res.json()) as ProjectRecalcResponse;
 }
+
+export async function prefetchSatellite(lat: number, lon: number): Promise<void> {
+  try {
+    await fetch(`${env.AGRONOMY_ENGINE_URL}/prefetch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lon }),
+      signal: AbortSignal.timeout(3_000),
+    });
+  } catch {
+    // Non-blocking best-effort prefetch
+  }
+}
+
+export async function getSatelliteStatus(
+  lat: number,
+  lon: number,
+): Promise<{ status: "ready" | "pending" | "not_started"; grid_key?: string }> {
+  try {
+    const res = await fetch(
+      `${env.AGRONOMY_ENGINE_URL}/prefetch/status?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
+      { signal: AbortSignal.timeout(3_000) },
+    );
+    if (!res.ok) return { status: "not_started" };
+    return (await res.json()) as { status: "ready" | "pending" | "not_started"; grid_key?: string };
+  } catch {
+    return { status: "not_started" };
+  }
+}

@@ -1,0 +1,303 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="1860" viewBox="0 0 2600 1860">
+<defs>
+  <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+    <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.06"/>
+  </filter>
+</defs>
+<rect x="0" y="0" width="2600" height="1860" fill="#F8FAFC"/>
+<rect x="0" y="0" width="2600" height="108" fill="#0F172A" stroke="none"/>
+<text x="48" y="49.0" fill="#F8FAFC" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="30" font-weight="700">TerraShift Agronomy Engine — Process Pipeline</text>
+<text x="48" y="78.4" fill="#94A3B8" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400">Request Execution Flow: Step 0 Concurrent Data Fusion -&gt; Layer 1 Regression -&gt; Layer 2 Vectorized GA</text>
+<rect x="2252" y="34" width="304" height="24" rx="6" ry="6" fill="#1E293B" stroke="#1E293B" stroke-width="1"/>
+<text x="2404.0" y="50.8" fill="#34D399" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="700">POST /predict &amp; /project-recalculate</text>
+<rect x="36" y="128" width="2528" height="198" rx="16" ry="16" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="2"/>
+<text x="60" y="162.0" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">STAGE 1 — FastAPI Entrypoints (app/main.py)</text>
+<text x="2540" y="159.6" fill="#0F172A" text-anchor="end" font-family="DejaVu Sans Mono, monospace" font-size="14" font-weight="400">Schemas: PredictRequest | ProjectRecalcRequest</text>
+<rect x="64" y="182" width="1340" height="124" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="65" y="183" width="1338" height="44" rx="10" ry="10" fill="#EFF6FF" stroke="#EFF6FF" stroke-width="1"/>
+<rect x="65" y="216" width="1338" height="11" fill="#EFF6FF" stroke="none"/>
+<rect x="65" y="226" width="1338" height="2" fill="#2563EB" stroke="none"/>
+<rect x="76" y="193" width="5" height="22" rx="3" ry="3" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="89" y="209.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">POST /predict (Full Optimization Pipeline)</text>
+<rect x="1284" y="192" width="108" height="19" rx="6" ry="6" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="1338.0" y="205.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">FULL PIPELINE</text>
+<text x="80" y="251.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">PredictRequest: centroid(lat, lon), polygon(GeoJSON), area_ha, current_crop,</text>
+<text x="80" y="273.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">  soil_type (optional), region_id, priority (&#x27;soil&#x27;|&#x27;water&#x27;|&#x27;cost&#x27;), planting_month</text>
+<rect x="1440" y="182" width="1096" height="124" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1441" y="183" width="1094" height="44" rx="10" ry="10" fill="#F0FDFA" stroke="#F0FDFA" stroke-width="1"/>
+<rect x="1441" y="216" width="1094" height="11" fill="#F0FDFA" stroke="none"/>
+<rect x="1441" y="226" width="1094" height="2" fill="#0D9488" stroke="none"/>
+<rect x="1452" y="193" width="5" height="22" rx="3" ry="3" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="1465" y="209.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">POST /predict/project-recalculate (Fixed-Plan Simulator)</text>
+<rect x="2421" y="192" width="103" height="19" rx="6" ry="6" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="2472.5" y="205.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">SKIP GA PATH</text>
+<text x="1456" y="251.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">ProjectRecalcRequest: centroid, current_crop, soil_type, region_id, planting_month,</text>
+<text x="1456" y="273.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">  seasons[0..2] -&gt; {crop_id, target_water_mm?, input_cost_usd_ha?}</text>
+<rect x="36" y="386" width="2528" height="304" rx="16" ry="16" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+<text x="60" y="420.0" fill="#1E3A8A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">STAGE 2 — Step 0: Concurrent Data Fusion (asyncio.gather)</text>
+<rect x="64" y="478" width="460" height="192" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="65" y="479" width="458" height="44" rx="10" ry="10" fill="#EFF6FF" stroke="#EFF6FF" stroke-width="1"/>
+<rect x="65" y="512" width="458" height="11" fill="#EFF6FF" stroke="none"/>
+<rect x="65" y="522" width="458" height="2" fill="#2563EB" stroke="none"/>
+<rect x="76" y="489" width="5" height="22" rx="3" ry="3" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="89" y="505.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">1. fetch_fused_climate()</text>
+<rect x="427" y="488" width="85" height="19" rx="6" ry="6" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="469.5" y="501.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">36x6 CUBE</text>
+<text x="80" y="547.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">nasa_fusion.py -&gt; FusedClimateCube</text>
+<text x="80" y="569.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• 36x6 NumPy cube (POWER + SMAP/NDVI)</text>
+<text x="80" y="591.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Applies AppEEARS L1/L2 override if ready</text>
+<text x="80" y="613.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Miss triggers async AppEEARS prefetch</text>
+<rect x="544" y="478" width="450" height="192" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="545" y="479" width="448" height="44" rx="10" ry="10" fill="#FEF3C7" stroke="#FEF3C7" stroke-width="1"/>
+<rect x="545" y="512" width="448" height="11" fill="#FEF3C7" stroke="none"/>
+<rect x="545" y="522" width="448" height="2" fill="#D97706" stroke="none"/>
+<rect x="556" y="489" width="5" height="22" rx="3" ry="3" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="569" y="505.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">2. fetch_soilgrids_profile()</text>
+<rect x="897" y="488" width="85" height="19" rx="6" ry="6" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="939.5" y="501.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">SOILGRIDS</text>
+<text x="560" y="547.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">soil_client.py -&gt; soilgrids | None</text>
+<text x="560" y="569.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• 0-5cm clay, sand, silt, pH, SOC</text>
+<text x="560" y="591.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Classifies texture -&gt; inferred_soil_type</text>
+<text x="560" y="613.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Graceful None on water pixel/timeout</text>
+<rect x="1014" y="478" width="450" height="192" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1015" y="479" width="448" height="44" rx="10" ry="10" fill="#ECFDF5" stroke="#ECFDF5" stroke-width="1"/>
+<rect x="1015" y="512" width="448" height="11" fill="#ECFDF5" stroke="none"/>
+<rect x="1015" y="522" width="448" height="2" fill="#059669" stroke="none"/>
+<rect x="1026" y="489" width="5" height="22" rx="3" ry="3" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="1039" y="505.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">3. fetch_terrain_profile()</text>
+<rect x="1354" y="488" width="98" height="19" rx="6" ry="6" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="1403.0" y="501.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">COPERNICUS</text>
+<text x="1030" y="547.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">terrain_client.py -&gt; terrain | None</text>
+<text x="1030" y="569.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Centroid + 8 outer-ring vertices</text>
+<text x="1030" y="591.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Computes slope_pct &amp; USLE ls_factor</text>
+<text x="1030" y="613.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Defaults to flat LS=1.0 if offline</text>
+<rect x="1484" y="478" width="450" height="192" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1485" y="479" width="448" height="44" rx="10" ry="10" fill="#F0FDFA" stroke="#F0FDFA" stroke-width="1"/>
+<rect x="1485" y="512" width="448" height="11" fill="#F0FDFA" stroke="none"/>
+<rect x="1485" y="522" width="448" height="2" fill="#0D9488" stroke="none"/>
+<rect x="1496" y="489" width="5" height="22" rx="3" ry="3" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="1509" y="505.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">4. fetch_seasonal_forecast()</text>
+<rect x="1864" y="488" width="58" height="19" rx="6" ry="6" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="1893.0" y="501.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">SEAS5</text>
+<text x="1500" y="547.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">forecast_client.py -&gt; forecast | None</text>
+<text x="1500" y="569.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• ECMWF SEAS5 180-day daily ensemble</text>
+<text x="1500" y="591.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Aggregates season1_precip_mm &amp; Tmax</text>
+<text x="1500" y="613.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Blends 35% into Season 1 water budget</text>
+<rect x="1964" y="478" width="572" height="192" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1965" y="479" width="570" height="44" rx="10" ry="10" fill="#EEF2FF" stroke="#EEF2FF" stroke-width="1"/>
+<rect x="1965" y="512" width="570" height="11" fill="#EEF2FF" stroke="none"/>
+<rect x="1965" y="522" width="570" height="2" fill="#4F46E5" stroke="none"/>
+<rect x="1976" y="489" width="5" height="22" rx="3" ry="3" fill="#4F46E5" stroke="#4F46E5" stroke-width="1"/>
+<text x="1989" y="505.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">Effective Soil Type Resolution</text>
+<rect x="2439" y="488" width="85" height="19" rx="6" ry="6" fill="#4F46E5" stroke="#4F46E5" stroke-width="1"/>
+<text x="2481.5" y="501.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">AUTO-SOIL</text>
+<text x="1980" y="547.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">main.py (before Layer 1):</text>
+<text x="1980" y="569.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">If &#x27;soil_type&#x27; was NOT explicitly passed in</text>
+<text x="1980" y="591.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">request AND SoilGrids succeeded, uses</text>
+<text x="1980" y="613.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">soilgrids[&#x27;inferred_soil_type&#x27;]; else req.soil_type</text>
+<rect x="36" y="746" width="2528" height="356" rx="16" ry="16" fill="#FFFBEB" stroke="#FCD34D" stroke-width="2"/>
+<text x="60" y="780.0" fill="#92400E" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">STAGE 3 — Layer 1: In-Memory Regression (layer1_regression.py)</text>
+<rect x="64" y="816" width="588" height="206" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="65" y="817" width="586" height="44" rx="10" ry="10" fill="#FEF3C7" stroke="#FEF3C7" stroke-width="1"/>
+<rect x="65" y="850" width="586" height="11" fill="#FEF3C7" stroke="none"/>
+<rect x="65" y="860" width="586" height="2" fill="#D97706" stroke="none"/>
+<rect x="76" y="827" width="5" height="22" rx="3" ry="3" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="89" y="843.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">A. Soil &amp; Telemetry Enrichment</text>
+<rect x="575" y="826" width="65" height="19" rx="6" ry="6" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="607.5" y="839.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">ENRICH</text>
+<text x="80" y="885.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• _enrich_soil_with_soilgrids():</text>
+<text x="80" y="907.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  Refines leaching_factor (sand/clay),</text>
+<text x="80" y="929.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  erosion_k_factor (silt/SOC), pH, SOC</text>
+<text x="80" y="951.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• _compute_vpd_and_frost():</text>
+<text x="80" y="973.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  mean_vpd_kpa &amp; frost_months (Tmin&lt;4C)</text>
+<rect x="678" y="816" width="608" height="206" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="679" y="817" width="606" height="44" rx="10" ry="10" fill="#FEF3C7" stroke="#FEF3C7" stroke-width="1"/>
+<rect x="679" y="850" width="606" height="11" fill="#FEF3C7" stroke="none"/>
+<rect x="679" y="860" width="606" height="2" fill="#D97706" stroke="none"/>
+<rect x="690" y="827" width="5" height="22" rx="3" ry="3" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="703" y="843.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">B. Harmonic Ridge &amp; Trend Fit</text>
+<rect x="1151" y="826" width="123" height="19" rx="6" ry="6" fill="#D97706" stroke="#D97706" stroke-width="1"/>
+<text x="1212.5" y="839.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">RIDGE + POLYFIT</text>
+<text x="694" y="885.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• _seasonal_design_matrix(t, m):</text>
+<text x="694" y="907.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  [t/36, sin/cos(2pi*m/12), sin/cos(4pi*m/12)]</text>
+<text x="694" y="929.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• 3x Ridge(alpha=1.0) on Precip, ET, T2M_MAX</text>
+<text x="694" y="951.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  Projects next 18 months (3 x 6m seasons)</text>
+<text x="694" y="973.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• np.polyfit(t, precip - 0.65*et) -&gt; slope &amp; R2</text>
+<rect x="1312" y="816" width="600" height="206" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1313" y="817" width="598" height="44" rx="10" ry="10" fill="#E0F2FE" stroke="#E0F2FE" stroke-width="1"/>
+<rect x="1313" y="850" width="598" height="11" fill="#E0F2FE" stroke="none"/>
+<rect x="1313" y="860" width="598" height="2" fill="#0284C7" stroke="none"/>
+<rect x="1324" y="827" width="5" height="22" rx="3" ry="3" fill="#0284C7" stroke="#0284C7" stroke-width="1"/>
+<text x="1337" y="843.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">C. 3-Season Water Budgets</text>
+<rect x="1802" y="826" width="98" height="19" rx="6" ry="6" fill="#0284C7" stroke="#0284C7" stroke-width="1"/>
+<text x="1851.0" y="839.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">MAHA / YALA</text>
+<text x="1328" y="885.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• season_water_budgets_mm[0..2] (min 140mm):</text>
+<text x="1328" y="907.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  S1 rain = 0.65*Ridge + 0.35*SEAS5 (if present)</text>
+<text x="1328" y="929.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  eff_rain = rain * (1 - 0.45 * leaching)</text>
+<text x="1328" y="951.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  + 0.65*WHC_reserve - 0.22*ET*vpd_evap_mult</text>
+<text x="1328" y="973.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  Scaled by WHC &amp; 0.90 ECOSTRESS ESI mult</text>
+<rect x="1938" y="816" width="598" height="206" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1939" y="817" width="596" height="44" rx="10" ry="10" fill="#FEF2F2" stroke="#FEF2F2" stroke-width="1"/>
+<rect x="1939" y="850" width="596" height="11" fill="#FEF2F2" stroke="none"/>
+<rect x="1939" y="860" width="596" height="2" fill="#DC2626" stroke="none"/>
+<rect x="1950" y="827" width="5" height="22" rx="3" ry="3" fill="#DC2626" stroke="#DC2626" stroke-width="1"/>
+<text x="1963" y="843.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">D. Risk &amp; Market Penalties</text>
+<rect x="2469" y="826" width="55" height="19" rx="6" ry="6" fill="#DC2626" stroke="#DC2626" stroke-width="1"/>
+<text x="2496.5" y="839.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">RISKS</text>
+<text x="1954" y="885.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• Oct Soil Moisture Anomaly % (np.polyfit SMAP)</text>
+<text x="1954" y="907.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• 12m Bare-Field Erosion (Rain*K*LS*(1.25-NDVI))</text>
+<text x="1954" y="929.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• Heat Stress (peak Tmax, &gt;35C mos, VPD, frost)</text>
+<text x="1954" y="951.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• Regional Saturation: 22% oversupply penalty</text>
+<text x="1954" y="973.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">  vector + dominant_pest_family -&gt; overall_score</text>
+<rect x="64" y="1038" width="2472" height="48" rx="10" ry="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="2"/>
+<text x="1300" y="1067.1" fill="#78350F" text-anchor="middle" font-family="DejaVu Sans Mono, monospace" font-size="15" font-weight="700">Output: Layer1RegressionOutput -&gt; season_water_budgets_mm (3,), soil_profile, region_profile, oversupply_penalty_vector (N_crops,), overall_risk_score</text>
+<rect x="36" y="1158" width="2528" height="462" rx="16" ry="16" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/>
+<text x="60" y="1192.0" fill="#065F46" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">STAGE 4 — Layer 2: Multi-Objective GA &amp; Simulator (layer2_evolution.py)</text>
+<rect x="64" y="1236" width="440" height="266" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="65" y="1237" width="438" height="44" rx="10" ry="10" fill="#ECFDF5" stroke="#ECFDF5" stroke-width="1"/>
+<rect x="65" y="1270" width="438" height="11" fill="#ECFDF5" stroke="none"/>
+<rect x="65" y="1280" width="438" height="2" fill="#059669" stroke="none"/>
+<rect x="76" y="1247" width="5" height="22" rx="3" ry="3" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="89" y="1263.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">1. GA Population &amp; Weights</text>
+<rect x="415" y="1246" width="77" height="19" rx="6" ry="6" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="453.5" y="1259.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">POP 50x3</text>
+<text x="80" y="1305.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">pop_size=50, n_gen=30, N_SEASONS=3</text>
+<text x="80" y="1327.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">Chromosome: [S1_idx, S2_idx, S3_idx]</text>
+<rect x="78" y="1342" width="412" height="1" fill="#E2E8F0" stroke="none"/>
+<text x="80" y="1361.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">Objective Weight Profiles (+0.12 prio):</text>
+<text x="80" y="1383.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• Strat B: (0.50, 0.40, 0.10)</text>
+<text x="80" y="1405.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  (Requires legume or cover crop)</text>
+<text x="80" y="1427.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• Strat C: (0.20, 0.15, 0.65)</text>
+<text x="80" y="1449.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  (Forbids repeating Strat A / B seqs)</text>
+<rect x="534" y="1236" width="700" height="266" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="535" y="1237" width="698" height="44" rx="10" ry="10" fill="#ECFDF5" stroke="#ECFDF5" stroke-width="1"/>
+<rect x="535" y="1270" width="698" height="11" fill="#ECFDF5" stroke="none"/>
+<rect x="535" y="1280" width="698" height="2" fill="#059669" stroke="none"/>
+<rect x="546" y="1247" width="5" height="22" rx="3" ry="3" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="559" y="1263.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">2. evaluate_population_vectorized()</text>
+<rect x="1126" y="1246" width="96" height="19" rx="6" ry="6" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="1174.0" y="1259.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">VECTORIZED</text>
+<text x="550" y="1305.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">Single NumPy fancy-index pass on lookup_store.crop_matrix (N, 6):</text>
+<rect x="548" y="1320" width="672" height="1" fill="#E2E8F0" stroke="none"/>
+<text x="550" y="1339.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">F_soil (Soil Health):</text>
+<text x="550" y="1361.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  N balance + (1 - C*K*LS) erosion cover + pest break + pH buffer - cover overuse</text>
+<text x="550" y="1383.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">F_water (Water Resilience):</text>
+<text x="550" y="1405.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  Seasonal budget deficit compliance (budget_score) + mean drought tolerance</text>
+<text x="550" y="1427.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">F_cost (Farm Economics):</text>
+<text x="550" y="1449.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">  Net margin (water/pest/pH yield mults, -22% oversupply) + 65% legume N credit</text>
+<rect x="1264" y="1236" width="456" height="266" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1265" y="1237" width="454" height="44" rx="10" ry="10" fill="#ECFDF5" stroke="#ECFDF5" stroke-width="1"/>
+<rect x="1265" y="1270" width="454" height="11" fill="#ECFDF5" stroke="none"/>
+<rect x="1265" y="1280" width="454" height="2" fill="#059669" stroke="none"/>
+<rect x="1276" y="1247" width="5" height="22" rx="3" ry="3" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="1289" y="1263.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">3. Evolutionary Loop (30 Gens)</text>
+<rect x="1637" y="1246" width="71" height="19" rx="6" ry="6" fill="#059669" stroke="#059669" stroke-width="1"/>
+<text x="1672.5" y="1259.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">30 GENS</text>
+<text x="1280" y="1305.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">For gen in range(30):</text>
+<text x="1280" y="1327.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Elitism: keep top 4 chromosomes</text>
+<text x="1280" y="1349.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Tournament Selection (k=3) for 46 kids</text>
+<text x="1280" y="1371.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• 1-Point Crossover across N_SEASONS=3</text>
+<text x="1280" y="1393.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">• Per-gene Mutation rate = 18%</text>
+<rect x="1278" y="1408" width="428" height="1" fill="#E2E8F0" stroke="none"/>
+<text x="1280" y="1427.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">Picks top distinct valid chromosome</text>
+<text x="1280" y="1449.7" fill="#334155" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="400">for Strategy B and Strategy C.</text>
+<rect x="1750" y="1236" width="786" height="266" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1751" y="1237" width="784" height="44" rx="10" ry="10" fill="#F5F3FF" stroke="#F5F3FF" stroke-width="1"/>
+<rect x="1751" y="1270" width="784" height="11" fill="#F5F3FF" stroke="none"/>
+<rect x="1751" y="1280" width="784" height="2" fill="#7C3AED" stroke="none"/>
+<rect x="1762" y="1247" width="5" height="22" rx="3" ry="3" fill="#7C3AED" stroke="#7C3AED" stroke-width="1"/>
+<text x="1775" y="1263.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">4. _build_strategy_payload() — Simulator</text>
+<rect x="2434" y="1246" width="90" height="19" rx="6" ry="6" fill="#7C3AED" stroke="#7C3AED" stroke-width="1"/>
+<text x="2479.0" y="1259.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">SIMULATOR</text>
+<text x="1766" y="1305.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">Simulates each 3-season chromosome season-by-season:</text>
+<text x="1766" y="1327.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• water_budget vs water_use -&gt; deficit_mm &amp; water_yield_mult</text>
+<text x="1766" y="1349.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• N carryover (65% legume credit), fertilizer_n_kg_ha, SOM delta %</text>
+<text x="1766" y="1371.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• oversupply discount (-22%), net_margin_usd_ha, agronomic warnings</text>
+<rect x="1764" y="1386" width="758" height="1" fill="#E2E8F0" stroke="none"/>
+<text x="1766" y="1405.7" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700">Generated Strategies:</text>
+<text x="1766" y="1427.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• A_BASELINE ([curr, curr, curr])  |  B_SOIL_WATER_RESILIENCE</text>
+<text x="1766" y="1449.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">• C_COST_MARKET_OPTIMIZED          |  or PROJECT_PLAN (fixed overrides)</text>
+<rect x="64" y="1524" width="2472" height="76" rx="10" ry="10" fill="#F0FDFA" stroke="#0D9488" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="90" y="1551.5" fill="#0F766E" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="700">Dual Execution Paths:</text>
+<text x="280" y="1550.6" fill="#134E4A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400">• POST /predict -&gt; Runs GA Steps 1-3 for B &amp; C, simulates A, B, C &amp; sets recommended_strategy = C (if priority==&#x27;cost&#x27;) else B</text>
+<text x="280" y="1578.6" fill="#134E4A" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="14" font-weight="400">• POST /predict/project-recalculate -&gt; SKIPS GA Steps 1-3; resolves fixed crop indices + season_overrides -&gt; calls _build_strategy_payload(&#x27;PROJECT_PLAN&#x27;)</text>
+<rect x="36" y="1666" width="2528" height="168" rx="16" ry="16" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="2"/>
+<text x="60" y="1700.0" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">STAGE 5 — JSON Responses (schemas.py)</text>
+<rect x="64" y="1716" width="1210" height="102" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="65" y="1717" width="1208" height="44" rx="10" ry="10" fill="#EFF6FF" stroke="#EFF6FF" stroke-width="1"/>
+<rect x="65" y="1750" width="1208" height="11" fill="#EFF6FF" stroke="none"/>
+<rect x="65" y="1760" width="1208" height="2" fill="#2563EB" stroke="none"/>
+<rect x="76" y="1727" width="5" height="22" rx="3" ry="3" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="89" y="1743.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">PredictResponse</text>
+<rect x="1185" y="1726" width="77" height="19" rx="6" ry="6" fill="#2563EB" stroke="#2563EB" stroke-width="1"/>
+<text x="1223.5" y="1739.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">JSON 200</text>
+<text x="80" y="1785.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">request_id, execution_ms, location, area_ha, inputs, climate (36 monthly records),</text>
+<text x="80" y="1805.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">risk, strategies [A, B, C], recommended_strategy, optimizer</text>
+<rect x="1314" y="1716" width="1222" height="102" rx="12" ry="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" filter="url(#shadow)"/>
+<rect x="1315" y="1717" width="1220" height="44" rx="10" ry="10" fill="#F0FDFA" stroke="#F0FDFA" stroke-width="1"/>
+<rect x="1315" y="1750" width="1220" height="11" fill="#F0FDFA" stroke="none"/>
+<rect x="1315" y="1760" width="1220" height="2" fill="#0D9488" stroke="none"/>
+<rect x="1326" y="1727" width="5" height="22" rx="3" ry="3" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="1339" y="1743.4" fill="#0F172A" text-anchor="start" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700">ProjectRecalcResponse</text>
+<rect x="2447" y="1726" width="77" height="19" rx="6" ry="6" fill="#0D9488" stroke="#0D9488" stroke-width="1"/>
+<text x="2485.5" y="1739.2" fill="#FFFFFF" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700">JSON 200</text>
+<text x="1330" y="1785.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">seasons[0..2] (per-season metrics), objectives (f_soil, f_water, f_cost),</text>
+<text x="1330" y="1805.7" fill="#1E40AF" text-anchor="start" font-family="DejaVu Sans Mono, monospace" font-size="13" font-weight="400">totals (water_use, deficit, N_balance, SOM_delta, margin, fitness), warnings</text>
+<polyline points="1010.0,306.0 1010.0,435.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1010.0,444.0 1003.5,431.0 1016.5,431.0" fill="#2563EB"/>
+<rect x="946.0" y="336.0" width="128.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#2563EB" stroke-width="1"/>
+<text x="1010" y="352.1" fill="#2563EB" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">asyncio.gather()</text>
+<line x1="294" y1="444" x2="1709" y2="444" stroke="#2563EB" stroke-width="3"/>
+<polyline points="294.0,444.0 294.0,469.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="294.0,478.0 287.5,465.0 300.5,465.0" fill="#2563EB"/>
+<polyline points="769.0,444.0 769.0,469.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="769.0,478.0 762.5,465.0 775.5,465.0" fill="#2563EB"/>
+<polyline points="1239.0,444.0 1239.0,469.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1239.0,478.0 1232.5,465.0 1245.5,465.0" fill="#2563EB"/>
+<polyline points="1709.0,444.0 1709.0,469.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1709.0,478.0 1702.5,465.0 1715.5,465.0" fill="#2563EB"/>
+<polyline points="1988.0,306.0 1988.0,456.0 344.0,456.0 344.0,469.0" fill="none" stroke="#0D9488" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 6"/>
+<polygon points="344.0,478.0 337.5,465.0 350.5,465.0" fill="#0D9488"/>
+<rect x="1891.0" y="336.0" width="194.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#0D9488" stroke-width="1"/>
+<text x="1988" y="352.1" fill="#0D9488" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">fetch_fused_climate() only</text>
+<polyline points="1934.0,574.0 1955.0,574.0" fill="none" stroke="#4F46E5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1964.0,574.0 1951.0,580.5 1951.0,567.5" fill="#4F46E5"/>
+<polyline points="1250.0,670.0 1250.0,796.0 358.0,796.0 358.0,807.0" fill="none" stroke="#D97706" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="358.0,816.0 351.5,803.0 364.5,803.0" fill="#D97706"/>
+<polyline points="1250.0,796.0 982.0,796.0 982.0,807.0" fill="none" stroke="#D97706" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="982.0,816.0 975.5,803.0 988.5,803.0" fill="#D97706"/>
+<polyline points="1612.0,670.0 1612.0,807.0" fill="none" stroke="#0284C7" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1612.0,816.0 1605.5,803.0 1618.5,803.0" fill="#0284C7"/>
+<polyline points="2237.0,670.0 2237.0,807.0" fill="none" stroke="#4F46E5" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="2237.0,816.0 2230.5,803.0 2243.5,803.0" fill="#4F46E5"/>
+<polyline points="652.0,919.0 669.0,919.0" fill="none" stroke="#D97706" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="678.0,919.0 665.0,925.5 665.0,912.5" fill="#D97706"/>
+<polyline points="1286.0,919.0 1303.0,919.0" fill="none" stroke="#D97706" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1312.0,919.0 1299.0,925.5 1299.0,912.5" fill="#D97706"/>
+<polyline points="1912.0,919.0 1929.0,919.0" fill="none" stroke="#D97706" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1938.0,919.0 1925.0,925.5 1925.0,912.5" fill="#D97706"/>
+<polyline points="1120.0,1086.0 1120.0,1212.0 284.0,1212.0 284.0,1227.0" fill="none" stroke="#059669" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="284.0,1236.0 277.5,1223.0 290.5,1223.0" fill="#059669"/>
+<rect x="1065.5" y="1110.0" width="109.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#059669" stroke-width="1"/>
+<text x="1120" y="1126.1" fill="#059669" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">POST /predict</text>
+<polyline points="2143.0,1086.0 2143.0,1227.0" fill="none" stroke="#0D9488" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 6"/>
+<polygon points="2143.0,1236.0 2136.5,1223.0 2149.5,1223.0" fill="#0D9488"/>
+<rect x="2060.5" y="1110.0" width="165.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#0D9488" stroke-width="1"/>
+<text x="2143" y="1126.1" fill="#0D9488" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">recalculate (skips GA)</text>
+<polyline points="504.0,1369.0 525.0,1369.0" fill="none" stroke="#059669" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="534.0,1369.0 521.0,1375.5 521.0,1362.5" fill="#059669"/>
+<polyline points="1234.0,1369.0 1255.0,1369.0" fill="none" stroke="#059669" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1264.0,1369.0 1251.0,1375.5 1251.0,1362.5" fill="#059669"/>
+<polyline points="1720.0,1369.0 1741.0,1369.0" fill="none" stroke="#059669" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1750.0,1369.0 1737.0,1375.5 1737.0,1362.5" fill="#059669"/>
+<polyline points="1492.0,1502.0 1492.0,1514.0 884.0,1514.0 884.0,1511.0" fill="none" stroke="#059669" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 6"/>
+<polygon points="884.0,1502.0 890.5,1515.0 877.5,1515.0" fill="#059669"/>
+<polyline points="760.0,1600.0 760.0,1707.0" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="760.0,1716.0 753.5,1703.0 766.5,1703.0" fill="#2563EB"/>
+<rect x="692.0" y="1626.0" width="136.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#2563EB" stroke-width="1"/>
+<text x="760" y="1642.1" fill="#2563EB" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">Strategies A, B, C</text>
+<polyline points="1925.0,1600.0 1925.0,1707.0" fill="none" stroke="#0D9488" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 6"/>
+<polygon points="1925.0,1716.0 1918.5,1703.0 1931.5,1703.0" fill="#0D9488"/>
+<rect x="1867.0" y="1626.0" width="116.0" height="24" rx="6" ry="6" fill="#FFFFFF" stroke="#0D9488" stroke-width="1"/>
+<text x="1925" y="1642.1" fill="#0D9488" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="12" font-weight="700">PROJECT_PLAN</text>
+</svg>

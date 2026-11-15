@@ -8,7 +8,7 @@ export interface ISimulationRun {
   prediction: PredictResponse;
   explanation: Explanation;
   recommended_strategy: StrategyId;
-  climate_source: "nasa_power" | "fallback";
+  climate_source: "nasa_power" | "nasa_power+appeears" | "fallback";
   created_at: Date;
   updated_at: Date;
 }
@@ -25,7 +25,7 @@ const simulationRunSchema = new Schema<ISimulationRun>(
       enum: ["A_BASELINE", "B_SOIL_WATER_RESILIENCE", "C_COST_MARKET_OPTIMIZED"],
       required: true,
     },
-    climate_source: { type: String, enum: ["nasa_power", "fallback"], required: true },
+    climate_source: { type: String, enum: ["nasa_power", "nasa_power+appeears", "fallback"], required: true },
   },
   {
     collection: "simulation_runs",

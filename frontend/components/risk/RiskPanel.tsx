@@ -196,7 +196,7 @@ export default function RiskPanel({ prediction }: { prediction: PredictResponse 
           Overall: <span className={LEVEL[overall].text}>{LEVEL[overall].word.toLowerCase()}</span>
         </p>
         <p className="mt-1 text-[15px] text-ink-3">
-          {climate.source === "nasa_power"
+          {climate.source.startsWith("nasa_power")
             ? `Based on ${monthly.length || climate.months_count || 36} months of NASA weather, soil moisture and plant health${years ? ` (${years})` : ""}.`
             : "NASA data was unavailable, so this uses modelled weather. Treat it as a rough guide."}
         </p>

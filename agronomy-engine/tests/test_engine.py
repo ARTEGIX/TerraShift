@@ -331,3 +331,326 @@ def test_project_recalculate_endpoint():
         assert "nitrogen_balance_kg_ha" in data["totals"]
 
         assert "warnings" in data
+
+
+def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
+    import asyncio
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+
+    async def fake_get(k: str):
+        return fake_redis.get(k)
+
+    async def fake_set(k: str, v: object, ttl_seconds: int | None = None):
+        fake_redis[k] = v
+
+    async def fake_del(k: str):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_get(*_a, **_k):
+        return None
+
+    async def fake_l2_save(*_a, **_k):
+        return True
+
+    monkeypatch.setattr(cache, "get_json", fake_get)
+    monkeypatch.setattr(cache, "set_json", fake_set)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+    monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
+    monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
+
+    # Simulate a pending task created in an earlier year window (2022-2024)
+    old_months = [f"{y:04d}-{m:02d}" for y in (2022, 2023, 2024) for m in range(1, 13)]
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n" + "\n".join(
+        f"id,8.31,80.40,{m}-01,0.55" for m in old_months
+    )
+    eco_csv = "ID,Latitude,Longitude,Date,ECO_L4T_ESI_002_ESI\n" + "\n".join(
+        f"id,8.31,80.40,{m}-01,0.72" for m in old_months
+    )
+    post_calls = 0
+    get_calls = 0
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload=None, text: str = ""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, **_kwargs):
+            nonlocal post_calls
+            post_calls += 1
+            return FakeResp(200, {"task_id": "task-123"})
+
+        async def get(self, url, **_kwargs):
+            nonlocal get_calls
+            get_calls += 1
+            if url.endswith("/task/task-123"):
+                return FakeResp(200, {"status": "done"})
+            if url.endswith("/bundle/task-123"):
+                return FakeResp(
+                    200,
+                    {
+                        "files": [
+                            {"file_id": "f1", "file_name": "terrashift-MOD13Q1-061-results.csv"},
+                            {"file_id": "f2", "file_name": "terrashift-ECO-L4T-ESI-002-results.csv"},
+                        ]
+                    },
+                )
+            if url.endswith("/bundle/task-123/f1"):
+                return FakeResp(200, text=modis_csv)
+            if url.endswith("/bundle/task-123/f2"):
+                return FakeResp(200, text=eco_csv)
+            return FakeResp(404)
+
+    monkeypatch.setattr(appeears_client.httpx, "AsyncClient", FakeClient)
+
+    # Pre-populate pending task in Redis with old_months
+    _, _, pending_key = appeears_client.appeears_pending_key(8.31, 80.40)
+    fake_redis[pending_key] = {"task_id": "task-123", "months": old_months}
+
+    # Hot /predict path should remain non-blocking (no HTTP calls)
+    assert asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40)) is None
+    assert get_calls == 0
+    assert post_calls == 0
+
+    # Background prefetch resumes task-123 with old_months and does NOT POST a duplicate task
+    res = asyncio.run(appeears_client.prefetch_appeears_point(8.31, 80.40, poll_interval_s=0.01, timeout_s=1.0))
+    assert res is not None
+    assert post_calls == 0
+    assert res["months"] == old_months
+    assert pending_key not in fake_redis
+    _, _, cache_key = appeears_client.appeears_cache_key(8.31, 80.40)
+    assert cache_key in fake_redis
+    assert res["ndvi"][0] == 0.55
+    assert res["ecostress_esi"][0] == 0.72
+
+    # Stale 2022-2024 cached series must not satisfy current target_36_months()
+    assert asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40)) is None
+
+
+def test_appeears_l1_redis_and_l2_general_db_fallback_and_write(monkeypatch):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_get_json(k):
+        return fake_redis.get(k)
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_get(grid_key, start_year, end_year):
+        return fake_l2.get((grid_key, start_year, end_year))
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "get_json", fake_get_json)
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+
+    months = appeears_client.target_36_months()
+    start_year, end_year = int(months[0][:4]), int(months[-1][:4])
+    _, _, cache_key = appeears_client.appeears_cache_key(7.87, 80.77)
+
+    # Seed only L2 (simulating Redis restart / TTL expiry)
+    l2_payload = {
+        "source": "appeears_smap_modis",
+        "months": months,
+        "ndvi": [0.48] * 36,
+        "smap_moisture_pct": [52.0] * 36,
+    }
+    fake_l2[(cache_key, start_year, end_year)] = l2_payload
+
+    assert cache_key not in fake_redis
+    status = asyncio.run(appeears_client.get_appeears_status(7.87, 80.77))
+    assert status == {"status": "ready", "grid_key": cache_key}
+    # L2 hit should warm L1 Redis
+    assert fake_redis[cache_key] == l2_payload
+
+    # Clear L1 again and verify get_cached_appeears_series also warms L1 from L2
+    fake_redis.clear()
+    series = asyncio.run(appeears_client.get_cached_appeears_series(7.87, 80.77))
+    assert series == l2_payload
+    assert fake_redis[cache_key] == l2_payload
+
+
+def test_appeears_sync_completed_tasks(monkeypatch):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_get_json(k):
+        return fake_redis.get(k)
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_get(grid_key, start_year, end_year):
+        return fake_l2.get((grid_key, start_year, end_year))
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "get_json", fake_get_json)
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+    monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
+    monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n" + "\n".join(
+        f"id,7.25,79.86,{m}-01,0.61" for m in months
+    )
+    bundle_downloads = 0
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload=None, text: str = ""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **_kwargs):
+            nonlocal bundle_downloads
+            if url.endswith("/task"):
+                return FakeResp(
+                    200,
+                    [
+                        {
+                            "task_id": "old-t",
+                            "task_name": "terrashift_7.25_79.86_2023_2025",
+                            "status": "done",
+                            "created": "2026-11-14T20:00:00",
+                        },
+                        {
+                            "task_id": "new-t",
+                            "task_name": "terrashift_7.25_79.86_2023_2025",
+                            "status": "done",
+                            "created": "2026-11-15T00:09:35",
+                        },
+                        {
+                            "task_id": "pending-t",
+                            "task_name": "terrashift_7.10_79.99_2023_2025",
+                            "status": "pending",
+                            "created": "2026-11-15T11:00:00",
+                        },
+                    ],
+                )
+            if url.endswith("/bundle/new-t"):
+                bundle_downloads += 1
+                return FakeResp(200, {"files": [{"file_id": "f1", "file_name": "terrashift-MOD13Q1-061-results.csv"}]})
+            if url.endswith("/bundle/new-t/f1"):
+                return FakeResp(200, text=modis_csv)
+            return FakeResp(404)
+
+    monkeypatch.setattr(appeears_client.httpx, "AsyncClient", FakeClient)
+
+    synced = asyncio.run(appeears_client.sync_completed_appeears_tasks())
+    assert len(synced) == 1
+    assert synced[0]["task_id"] == "new-t"
+    assert synced[0]["action"] == "imported"
+    assert bundle_downloads == 1
+    assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
+    assert "appeears:grid:7.25:79.86" in fake_redis
+
+
+def test_appeears_import_csv_dir_groups_task_name_and_hyphen_prefixes(monkeypatch, tmp_path):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+
+    m_22_24 = [f"{y:04d}-{m:02d}" for y in (2022, 2023, 2024) for m in range(1, 13)]
+    m_23_25 = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+
+    (tmp_path / "terrashift_8.31_80.40_2022_2024-MOD13Q1-061-results.csv").write_text(
+        "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+        + "\n".join(f"id,8.31,80.40,{m}-01,0.51" for m in m_22_24)
+    )
+    (tmp_path / "terrashift-7-25-79-86-2023-2025-MOD13Q1-061-results.csv").write_text(
+        "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+        + "\n".join(f"id,7.25,79.86,{m}-01,0.68" for m in m_23_25)
+    )
+
+    imported = asyncio.run(appeears_client.import_appeears_csv_dir(str(tmp_path)))
+    assert len(imported) == 2
+    by_grid = {item["grid_key"]: item for item in imported}
+    assert by_grid["appeears:grid:8.31:80.40"]["start_year"] == 2022
+    assert by_grid["appeears:grid:8.31:80.40"]["end_year"] == 2024
+    assert by_grid["appeears:grid:7.25:79.86"]["start_year"] == 2023
+    assert by_grid["appeears:grid:7.25:79.86"]["end_year"] == 2025
+    assert ("appeears:grid:8.31:80.40", 2022, 2024) in fake_l2
+    assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
+    assert fake_l2[("appeears:grid:8.31:80.40", 2022, 2024)]["ndvi"][0] == 0.51
+    assert fake_l2[("appeears:grid:7.25:79.86", 2023, 2025)]["ndvi"][0] == 0.68

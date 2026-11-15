@@ -128,7 +128,7 @@ export interface PredictResponse {
   area_ha: number | null;
   inputs: Record<string, unknown>;
   climate: {
-    source: "nasa_power" | "fallback";
+    source: "nasa_power" | "nasa_power+appeears" | "fallback";
     grid_key?: string;
     lat: number;
     lon: number;
@@ -199,7 +199,7 @@ export interface FarmReportSummary {
   id: string;
   _id: string;
   recommended_strategy: StrategyId;
-  climate_source: "nasa_power" | "fallback";
+  climate_source: "nasa_power" | "nasa_power+appeears" | "fallback";
   created_at: string;
   current_crop?: string;
   projects_count: number;
@@ -244,7 +244,7 @@ export interface ProjectDetailResponse {
     id: string;
     _id: string;
     recommended_strategy: StrategyId;
-    climate_source: "nasa_power" | "fallback";
+    climate_source: "nasa_power" | "nasa_power+appeears" | "fallback";
     created_at: string;
   } | null;
 }
@@ -254,7 +254,7 @@ export interface AnalysisSummary {
   _id: string;
   farm_id?: string | null;
   recommended_strategy: StrategyId;
-  climate_source: "nasa_power" | "fallback";
+  climate_source: "nasa_power" | "nasa_power+appeears" | "fallback";
   created_at: string;
   request?: { current_crop?: string; priority?: Priority };
 }

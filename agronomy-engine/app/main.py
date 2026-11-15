@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import cache
+from app import appeears_client, appeears_store, cache
 from app.config import get_settings
 from app.forecast_client import fetch_seasonal_forecast
 from app.layer1_regression import run_layer1_regression
@@ -31,7 +31,7 @@ from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
 from app.soil_client import fetch_soilgrids_profile
 from app.terrain_client import fetch_terrain_profile
-from app.schemas import PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse
+from app.schemas import Centroid, PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("agronomy-engine")
@@ -41,6 +41,7 @@ log = logging.getLogger("agronomy-engine")
 async def lifespan(_: FastAPI):
     lookup_store.reload_from_atlas()
     yield
+    await appeears_store.close()
     await cache.close()
 
 
@@ -91,6 +92,25 @@ async def soils() -> list[dict[str, Any]]:
 @app.get("/regions", tags=["reference"])
 async def regions() -> list[dict[str, Any]]:
     return list(lookup_store.regional_saturation.values())
+
+
+@app.post("/prefetch", tags=["engine"])
+async def prefetch_satellite(coord: Centroid) -> dict[str, Any]:
+    """Start non-blocking background AppEEARS satellite prefetch for a coordinate."""
+    status = await appeears_client.get_appeears_status(coord.lat, coord.lon)
+    if status["status"] == "ready":
+        return status
+    started = appeears_client.trigger_background_prefetch(coord.lat, coord.lon)
+    return {
+        "status": "pending" if (started or status["status"] == "pending") else "skipped",
+        "grid_key": status["grid_key"],
+    }
+
+
+@app.get("/prefetch/status", tags=["engine"])
+async def prefetch_satellite_status(lat: float, lon: float) -> dict[str, Any]:
+    """Check whether AppEEARS satellite data is ready or still pending for a coordinate."""
+    return await appeears_client.get_appeears_status(lat, lon)
 
 
 @app.post("/predict", response_model=PredictResponse, tags=["engine"])

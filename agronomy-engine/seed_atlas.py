@@ -314,6 +314,15 @@ def seed_atlas(atlas_uri: str | None = None) -> dict[str, int]:
         [("report_id", ASCENDING)],
         name="idx_projects_report_id",
     )
+    general_db["appeears_series"].create_index(
+        [("grid_key", ASCENDING), ("start_year", ASCENDING), ("end_year", ASCENDING)],
+        name="idx_appeears_grid_window",
+    )
+    general_db["appeears_series"].create_index(
+        [("updated_at", ASCENDING)],
+        name="idx_appeears_updated_ttl",
+        expireAfterSeconds=180 * 86_400,
+    )
 
     counts = {
         "lookup_db.crops_catalog": lookup_db["crops_catalog"].count_documents({}),
