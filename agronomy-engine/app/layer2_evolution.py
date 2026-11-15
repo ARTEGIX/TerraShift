@@ -25,7 +25,7 @@ from typing import Any
 
 import random
 
-from deap import base, creator, tools
+import pygad
 import numpy as np
 
 from app.config import get_settings
