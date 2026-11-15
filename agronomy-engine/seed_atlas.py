@@ -249,6 +249,7 @@ DEMO_FARM_SEED: dict[str, Any] = {
     "region_id": "region_lk_dryzone",
     "soil_type": "soil_clay_loam",
     "current_crop": "paddy_rice",
+    "planting_month": 10,
     "default_priority": "water",
     "area_ha": 2.45,
     "centroid": {"lat": 8.3114, "lon": 80.4037},
@@ -304,6 +305,14 @@ def seed_atlas(atlas_uri: str | None = None) -> dict[str, int]:
     general_db["simulation_runs"].create_index(
         [("farm_id", ASCENDING), ("created_at", DESCENDING)],
         name="idx_simulation_runs_farm_id",
+    )
+    general_db["projects"].create_index(
+        [("farm_id", ASCENDING), ("created_at", DESCENDING)],
+        name="idx_projects_farm_id",
+    )
+    general_db["projects"].create_index(
+        [("report_id", ASCENDING)],
+        name="idx_projects_report_id",
     )
 
     counts = {
