@@ -5,12 +5,26 @@ from fastapi.testclient import TestClient
 
 import seed_atlas
 from app.layer1_regression import run_layer1_regression
-from app.layer2_evolution import run_layer2_evolution
+from app.layer2_evolution import (
+    _build_strategy_payload,
+    evaluate_population_vectorized,
+    run_layer2_evolution,
+)
 from app.main import app
 from app.memory_store import lookup_store
 from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
 from app.forecast_client import parse_seasonal_forecast
-from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
+from app.nasa_fusion import (
+    COL_NDVI,
+    COL_SMAP_MOISTURE,
+    COL_SOLAR,
+    COL_T2M_MAX,
+    SOIL_PARAMETERS,
+    _fetch_power_raw,
+    build_cube_from_power,
+    build_fallback_cube,
+    grid_cache_key,
+)
 from app.soil_client import classify_soil_type, parse_soilgrids_response
 from app.terrain_client import compute_slope_and_ls
 
@@ -117,6 +131,66 @@ def test_build_cube_from_power_with_optional_t2m_min_and_rh2m():
     assert records[0]["rh2m_pct"] == 78.0
 
 
+def test_build_cube_from_power_uses_gwetroot_and_fetch_requests_soil_parameters(monkeypatch):
+    import asyncio
+
+    from app import nasa_fusion
+
+    captured_params: dict[str, object] = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"properties": {"parameter": {}}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, _url, params=None):
+            captured_params.update(params or {})
+            return FakeResp()
+
+    monkeypatch.setattr(nasa_fusion.httpx, "AsyncClient", FakeClient)
+    asyncio.run(_fetch_power_raw(8.31, 80.40, 2023, 2025))
+    requested = str(captured_params.get("parameters", "")).split(",")
+    for param in SOIL_PARAMETERS:
+        assert param in requested
+
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 32.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.5 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+                "GWETROOT": {k: (0.63 if i != 4 else -999.0) for i, k in enumerate(ym_keys)},
+                "GWETTOP": {k: 0.42 for k in ym_keys},
+            }
+        },
+        "parameters": {
+            "ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"},
+            "EVPTRNS": {"units": "MJ/m^2/day"},
+        },
+    }
+    cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
+    assert np.allclose(cube.matrix[:, COL_SMAP_MOISTURE], 63.0)
+    assert cube.extra_series is not None
+    assert np.allclose(cube.extra_series["gwetroot_pct"], 63.0)
+    assert np.allclose(cube.extra_series["gwettop_pct"], 42.0)
+
+
 def test_soilgrids_parser_and_classifier():
     raw = {
         "properties": {
@@ -201,6 +275,115 @@ def test_layer1_and_layer2_consume_soilgrids_and_vpd():
     assert l1_sg.soil_profile["leaching_factor"] != l1_base.soil_profile["leaching_factor"]
     strategies, _, _ = run_layer2_evolution("paddy_rice", "soil", l1_sg)
     assert len(strategies) == 3
+
+
+def test_layer1_uses_regressed_smap_reserve_and_planting_month_anomaly():
+    cube_high = build_fallback_cube(7.87, 80.77)
+    cube_high.matrix[:, COL_SMAP_MOISTURE] = 85.0
+
+    cube_low = build_fallback_cube(7.87, 80.77)
+    cube_low.matrix[:, COL_SMAP_MOISTURE] = 25.0
+
+    l1_high = run_layer1_regression(cube=cube_high, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_low = run_layer1_regression(cube=cube_low, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert np.all(l1_high.season_water_budgets_mm > l1_low.season_water_budgets_mm)
+
+    cube_pm = build_fallback_cube(7.87, 80.77)
+    cube_pm.matrix[:, COL_SMAP_MOISTURE] = 50.0
+    cube_pm.matrix[cube_pm.month_numbers == 4, COL_SMAP_MOISTURE] = np.array([60.0, 45.0, 30.0])
+    cube_pm.matrix[cube_pm.month_numbers == 10, COL_SMAP_MOISTURE] = np.array([40.0, 55.0, 70.0])
+
+    l1_apr = run_layer1_regression(
+        cube=cube_pm, soil_type="soil_clay_loam", current_crop="paddy_rice", planting_month=4
+    )
+    l1_oct = run_layer1_regression(
+        cube=cube_pm, soil_type="soil_clay_loam", current_crop="paddy_rice", planting_month=10
+    )
+    assert l1_apr.october_moisture_anomaly_pct < 0.0
+    assert l1_oct.october_moisture_anomaly_pct > 0.0
+
+
+def test_layer2_thermal_solar_ndvi_vigor_and_soilgrids_whc_som():
+    # Improvement 3: Seasonal heat stress, VPD, solar irradiance & ECOSTRESS ESI in Layer 2 scoring
+    cube_cool = build_fallback_cube(7.87, 80.77)
+    cube_cool.matrix[:, COL_T2M_MAX] = 30.0
+    cube_cool.matrix[:, COL_SOLAR] = 5.0
+
+    cube_hot = build_fallback_cube(7.87, 80.77)
+    cube_hot.matrix[:, COL_T2M_MAX] = 38.5
+    cube_hot.matrix[:, COL_SOLAR] = 6.8
+    cube_hot.extra_series = {
+        "t2m_min_c": [25.0] * 36,
+        "rh2m_pct": [35.0] * 36,
+        "ecostress_esi": [0.32] * 36,
+    }
+
+    l1_cool = run_layer1_regression(cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_hot = run_layer1_regression(cube=cube_hot, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert l1_hot.season_tmax_c.shape == (3,)
+    assert l1_hot.season_solar_kwh.shape == (3,)
+    assert np.all(l1_hot.season_tmax_c > 37.0)
+    assert np.all(l1_hot.season_solar_kwh > 6.0)
+
+    onion_idx = lookup_store.crop_index["onion"]
+    sesame_idx = lookup_store.crop_index["sesame"]
+    pop_test = np.array([[onion_idx, onion_idx, onion_idx], [sesame_idx, sesame_idx, sesame_idx]], dtype=np.int32)
+
+    _, fw_cool, fc_cool = evaluate_population_vectorized(pop_test, l1_cool, lookup_store)
+    _, fw_hot, fc_hot = evaluate_population_vectorized(pop_test, l1_hot, lookup_store)
+    # Heat-sensitive onion drops sharply under >35°C + high VPD + low ESI, while C4/heat-tolerant sesame benefits from high solar
+    assert fc_hot[0] < fc_cool[0]
+    assert fw_hot[0] < fw_cool[0]
+    assert fw_hot[1] >= fw_cool[1]
+
+    # Improvement 4: Dynamic bare-field months from MODIS/HLS NDVI (<0.28) + field vigor multiplier from p90 NDVI
+    cube_deg = build_fallback_cube(7.87, 80.77)
+    cube_deg.matrix[:, COL_NDVI] = 0.32
+    cube_deg.matrix[cube_deg.month_numbers == 6, COL_NDVI] = 0.21  # June bare soil detected from satellite
+
+    cube_vig = build_fallback_cube(7.87, 80.77)
+    cube_vig.matrix[:, COL_NDVI] = 0.76
+
+    l1_deg = run_layer1_regression(cube=cube_deg, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_vig = run_layer1_regression(cube=cube_vig, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert 6 in l1_deg.bare_field_months
+    assert l1_vig.field_vigor_multiplier > l1_deg.field_vigor_multiplier
+
+    strat_deg = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_deg, lookup_store
+    )
+    strat_vig = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_vig, lookup_store
+    )
+    assert strat_vig["totals"]["revenue_usd_ha"] > strat_deg["totals"]["revenue_usd_ha"]
+
+    # Improvement 5: Pedotransfer water_holding_mm_m & initial SOM % from SoilGrids soc_g_kg
+    sg_rich = {"clay_pct": 38.0, "sand_pct": 22.0, "silt_pct": 40.0, "ph": 6.4, "soc_g_kg": 25.0}
+    sg_sandy = {"clay_pct": 10.0, "sand_pct": 75.0, "silt_pct": 15.0, "ph": 6.0, "soc_g_kg": 6.0}
+    l1_rich = run_layer1_regression(
+        cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=sg_rich
+    )
+    l1_sandy = run_layer1_regression(
+        cube=cube_cool, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=sg_sandy
+    )
+    assert l1_rich.soil_profile["water_holding_mm_m"] > l1_sandy.soil_profile["water_holding_mm_m"]
+    assert np.isclose(l1_rich.soil_profile["som_pct"], 25.0 * 0.1724, atol=1e-2)
+
+    strat_rich = _build_strategy_payload(
+        "A_BASELINE", "Baseline", "Desc", (sesame_idx, sesame_idx, sesame_idx), l1_rich, lookup_store
+    )
+    # Initial SOM = 25.0 * 0.1724 = 4.31%, minus 0.05 in season 1 -> ~4.26%
+    assert np.isclose(strat_rich["seasons"][0]["metrics"]["som_pct"], 25.0 * 0.1724 - 0.05, atol=1e-2)
+
+    # Improvement 6: Blend seasonal forecast season1_mean_tmax_c into Season 1 pred_t2m
+    l1_fc_hot = run_layer1_regression(
+        cube=cube_cool,
+        soil_type="soil_clay_loam",
+        current_crop="paddy_rice",
+        seasonal_forecast={"season1_precip_mm": 400.0, "season1_mean_tmax_c": 39.0},
+    )
+    assert l1_fc_hot.seasonal_forecast_tmax_c == 39.0
+    assert l1_fc_hot.season_tmax_c[0] > l1_cool.season_tmax_c[0]
 
 
 def test_terrain_seasonal_forecast_and_hls_ecostress():
@@ -654,3 +837,84 @@ def test_appeears_import_csv_dir_groups_task_name_and_hyphen_prefixes(monkeypatc
     assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
     assert fake_l2[("appeears:grid:8.31:80.40", 2022, 2024)]["ndvi"][0] == 0.51
     assert fake_l2[("appeears:grid:7.25:79.86", 2023, 2025)]["ndvi"][0] == 0.68
+
+
+def test_regional_lookup_ingestor_and_regions_ensure_endpoint(monkeypatch):
+    from app import regional_ingestor
+    from app.memory_store import InMemoryLookupStore
+
+    test_store = InMemoryLookupStore()
+
+    async def fake_reverse_geocode(lat: float, lon: float):
+        return {
+            "region_id": "region_ke_nakuru",
+            "name": "Nakuru County, Kenya",
+            "country_iso2": "KE",
+            "country_name": "Kenya",
+            "subdivision": "Nakuru County",
+            "source": "bigdatacloud_reverse_geocode",
+        }
+
+    async def fake_ag_stats(iso2: str):
+        return {
+            "country_iso2": iso2,
+            "ppp_factor": 0.94,
+            "harvested_area_ha": {"maize": 420_000.0, "cowpea": 95_000.0, "mung_bean": 40_000.0},
+            "revenue_mult_by_crop": {},
+            "source": "worldbank_ppp+faostat_qcl",
+        }
+
+    monkeypatch.setattr(regional_ingestor, "resolve_region_metadata", fake_reverse_geocode)
+    monkeypatch.setattr(regional_ingestor, "fetch_external_country_ag_stats", fake_ag_stats)
+
+    import asyncio
+
+    bundle = asyncio.run(
+        regional_ingestor.ensure_region_in_lookup_db(
+            lat=-0.3031,
+            lon=36.0800,
+            store=test_store,
+            persist_atlas=False,
+        )
+    )
+    assert bundle["region_id"] == "region_ke_nakuru"
+    assert bundle["soil_id"] == "soil_region_ke_nakuru"
+    assert "maize" in bundle["oversupplied_crops"]
+    assert bundle["dominant_pest_family"] == "poaceae"
+    assert "region_ke_nakuru" in test_store.regional_saturation
+    assert "soil_region_ke_nakuru" in test_store.soil_profiles
+    assert "region_ke_nakuru" in test_store.regional_crops_by_region
+
+    reg_view = test_store.for_region("region_ke_nakuru", ensure_crop_id="maize")
+    assert reg_view.crop_matrix.shape[1] == 6
+    assert reg_view.crop_matrix.flags["C_CONTIGUOUS"]
+    assert reg_view.oversupplied_mask("region_ke_nakuru")[reg_view.crop_index["maize"]] == 1.0
+
+    # Verify Layer 1 + Layer 2 run against the regional lookup slice
+    cube = build_fallback_cube(-0.3031, 36.0800)
+    l1 = run_layer1_regression(
+        cube=cube,
+        soil_type="soil_region_ke_nakuru",
+        current_crop="maize",
+        region_id="region_ke_nakuru",
+        store=test_store,
+    )
+    assert l1.region_profile["_id"] == "region_ke_nakuru"
+    assert l1.soil_profile["_id"] == "soil_region_ke_nakuru"
+    strats, rec, meta = run_layer2_evolution("maize", "cost", l1, store=test_store)
+    assert len(strats) == 3
+    assert rec == "C_COST_MARKET_OPTIMIZED"
+    assert meta["lookup_source"].endswith(":region_ke_nakuru")
+
+    # Also test FastAPI POST /regions/ensure and GET /crops?region_id=...
+    with TestClient(app) as client:
+        resp = client.post("/regions/ensure", json={"lat": -0.3031, "lon": 36.0800})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["region_id"] == "region_ke_nakuru"
+
+        crops_resp = client.get("/crops", params={"region_id": "region_ke_nakuru"})
+        assert crops_resp.status_code == 200
+        reg_crops = crops_resp.json()
+        assert len(reg_crops) == 12
+        assert all(c["region_id"] == "region_ke_nakuru" for c in reg_crops)

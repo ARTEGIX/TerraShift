@@ -6,7 +6,7 @@ import { validateBody } from "../middleware/validate";
 import { Farm, type IFarm } from "../models/Farm";
 import { Project } from "../models/Project";
 import { SimulationRun } from "../models/SimulationRun";
-import { prefetchSatellite } from "../services/agronomyClient";
+import { ensureRegion, prefetchSatellite } from "../services/agronomyClient";
 import type { Polygon } from "../types/contract";
 import { HttpError } from "../utils/HttpError";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -84,17 +84,33 @@ router.post(
       }
     }
 
+    const centroid = body.centroid ?? polygonCentroid(polygon);
+    let resolvedRegionId = body.region_id;
+    let resolvedSoilType: FarmInput["soil_type"] = body.soil_type;
+
+    if (!resolvedRegionId) {
+      const regionalData = await ensureRegion(centroid.lat, centroid.lon, polygon);
+      if (regionalData?.region_id) {
+        resolvedRegionId = regionalData.region_id;
+        if (!body.soil_type && regionalData.soil_type) {
+          resolvedSoilType = regionalData.soil_type as FarmInput["soil_type"];
+        }
+      }
+    } else {
+      void ensureRegion(centroid.lat, centroid.lon, polygon);
+    }
+
     const farmDoc: IFarm = {
       _id: farmId,
       owner: ownerId,
       name: body.name,
-      region_id: body.region_id ?? "region_lk_dryzone",
-      soil_type: body.soil_type,
+      region_id: resolvedRegionId ?? (centroid.lat > 23.5 ? "region_us_midwest" : "region_lk_dryzone"),
+      soil_type: resolvedSoilType,
       current_crop: body.current_crop,
       default_priority: body.default_priority,
       ...(body.planting_month !== undefined && { planting_month: body.planting_month }),
       area_ha: Number(polygonAreaHa(polygon).toFixed(3)) || 1.0,
-      centroid: body.centroid ?? polygonCentroid(polygon),
+      centroid,
       polygon,
     };
 
