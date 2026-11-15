@@ -60,3 +60,44 @@ class PredictResponse(BaseModel):
     strategies: list[dict[str, Any]]
     recommended_strategy: StrategyCode
     optimizer: dict[str, Any]
+
+
+class SeasonOverride(BaseModel):
+    crop_id: str = Field(..., examples=["paddy_rice"])
+    target_water_mm: float | None = Field(default=None, gt=0, description="Override crop water demand (mm)")
+    input_cost_usd_ha: float | None = Field(default=None, ge=0, description="Override input cost (USD/ha)")
+
+    @field_validator("crop_id")
+    @classmethod
+    def _known_crop(cls, v: str) -> str:
+        cid = lookup_store.resolve_crop_id(v)
+        if cid is None:
+            raise ValueError(f"unknown crop '{v}'. See GET /crops")
+        return cid
+
+
+class ProjectRecalcRequest(BaseModel):
+    centroid: Centroid
+    soil_type: str = Field(default="soil_clay_loam")
+    current_crop: str = Field(..., examples=["paddy_rice"])
+    region_id: str | None = Field(default=None)
+    priority: Priority = "water"
+    planting_month: int = Field(default=10, ge=1, le=12)
+    area_ha: float | None = Field(default=None, gt=0)
+    seasons: list[SeasonOverride] = Field(..., min_length=3, max_length=3)
+
+    @field_validator("current_crop")
+    @classmethod
+    def _known_current_crop(cls, v: str) -> str:
+        cid = lookup_store.resolve_crop_id(v)
+        if cid is None:
+            raise ValueError(f"unknown crop '{v}'. See GET /crops")
+        return cid
+
+
+class ProjectRecalcResponse(BaseModel):
+    seasons: list[dict[str, Any]]
+    objectives: dict[str, float]
+    totals: dict[str, float]
+    warnings: list[str]
+

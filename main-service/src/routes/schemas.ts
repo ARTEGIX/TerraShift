@@ -43,6 +43,7 @@ export const farmInputSchema = z.object({
   soil_type: soilTypeSchema.default("soil_clay_loam"),
   current_crop: z.string().trim().min(1),
   default_priority: prioritySchema.default("water"),
+  planting_month: z.number().int().min(1).max(12).optional(),
 });
 
 export const analyzeInputSchema = z.union([
@@ -67,3 +68,55 @@ export const analyzeInputSchema = z.union([
 
 export type FarmInput = z.infer<typeof farmInputSchema>;
 export type AnalyzeInput = z.infer<typeof analyzeInputSchema>;
+
+export const farmPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  polygon: polygonSchema.optional(),
+  centroid: centroidSchema.optional(),
+  region_id: z.string().trim().optional(),
+  soil_type: soilTypeSchema.optional(),
+  current_crop: z.string().trim().min(1).optional(),
+  default_priority: prioritySchema.optional(),
+  planting_month: z.number().int().min(1).max(12).optional(),
+}).refine((obj: Record<string, unknown>) => Object.keys(obj).length > 0, { message: "At least one field required" });
+
+const strategyIdMap: Record<string, "A_BASELINE" | "B_SOIL_WATER_RESILIENCE" | "C_COST_MARKET_OPTIMIZED"> = {
+  A: "A_BASELINE",
+  B: "B_SOIL_WATER_RESILIENCE",
+  C: "C_COST_MARKET_OPTIMIZED",
+  A_BASELINE: "A_BASELINE",
+  B_SOIL_WATER_RESILIENCE: "B_SOIL_WATER_RESILIENCE",
+  C_COST_MARKET_OPTIMIZED: "C_COST_MARKET_OPTIMIZED",
+};
+
+export const projectCreateSchema = z.object({
+  report_id: z.string().trim().min(1),
+  selected_strategy: z
+    .string()
+    .trim()
+    .transform((val: string) => strategyIdMap[val] ?? val)
+    .pipe(z.enum(["A_BASELINE", "B_SOIL_WATER_RESILIENCE", "C_COST_MARKET_OPTIMIZED"])),
+  name: z.string().trim().min(1).max(120),
+});
+
+export const projectPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  seasons: z.array(z.object({
+    crop_id: z.string().trim().min(1),
+    target_water_mm: z.number().positive().nullable().optional(),
+    input_cost_usd_ha: z.number().nonnegative().nullable().optional(),
+  })).length(3).optional(),
+}).refine((obj: Record<string, unknown>) => Object.keys(obj).length > 0, { message: "At least one field required" });
+
+export const projectRecalcSchema = z.object({
+  seasons: z.array(z.object({
+    crop_id: z.string().trim().min(1),
+    target_water_mm: z.number().positive().nullable().optional(),
+    input_cost_usd_ha: z.number().nonnegative().nullable().optional(),
+  })).length(3),
+});
+
+export type FarmPatch = z.infer<typeof farmPatchSchema>;
+export type ProjectCreate = z.infer<typeof projectCreateSchema>;
+export type ProjectPatch = z.infer<typeof projectPatchSchema>;
+export type ProjectRecalc = z.infer<typeof projectRecalcSchema>;

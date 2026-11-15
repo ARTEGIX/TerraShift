@@ -8,6 +8,7 @@ export interface IFarm {
   region_id: string;
   soil_type: string;
   current_crop: string;
+  planting_month?: number;
   default_priority: Priority;
   area_ha: number;
   centroid: { lat: number; lon: number };
@@ -24,6 +25,7 @@ const farmSchema = new Schema<IFarm>(
     region_id: { type: String, default: "region_lk_dryzone" },
     soil_type: { type: String, required: true, default: "soil_clay_loam" },
     current_crop: { type: String, required: true },
+    planting_month: { type: Number, min: 1, max: 12 },
     default_priority: { type: String, enum: ["cost", "water", "soil"], default: "water" },
     area_ha: { type: Number, required: true },
     centroid: {

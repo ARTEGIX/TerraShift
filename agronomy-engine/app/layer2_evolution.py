@@ -218,6 +218,7 @@ def _build_strategy_payload(
     seq: tuple[int, int, int],
     layer1: Layer1RegressionOutput,
     store: InMemoryLookupStore = lookup_store,
+    season_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Simulate a single 3-season chromosome in detail for API & frontend presentation."""
     arr = np.asarray([list(seq)], dtype=np.int32)
@@ -236,15 +237,22 @@ def _build_strategy_payload(
     total_cost = 0.0
     total_rev = 0.0
     prev_family: str | None = None
+    rel_def_list: list[float] = []
+    drought_tol_list: list[float] = []
 
     for s_idx, crop_idx in enumerate(seq):
         cid = store.crop_ids[crop_idx]
         crop = store.crops_by_id[cid]
+        override = (season_overrides[s_idx] if season_overrides and s_idx < len(season_overrides) else None) or {}
         budget_mm = float(layer1.season_water_budgets_mm[s_idx])
         demand_mm = float(crop["water_demand_mm"])
+        if override.get("target_water_mm") is not None:
+            demand_mm = float(override["target_water_mm"])
         drought_tol = float(crop["drought_tolerance"])
         deficit_mm = max(0.0, demand_mm - budget_mm)
         rel_def = deficit_mm / max(1.0, demand_mm)
+        rel_def_list.append(min(1.0, max(0.0, rel_def)))
+        drought_tol_list.append(drought_tol)
 
         fam = str(crop["pest_family"])
         same_family = prev_family == fam
@@ -263,7 +271,10 @@ def _build_strategy_payload(
             n_carry += n_imp * LEGUME_N_CARRYOVER
 
         fert_cost = fert_n * UREA_N_COST_USD_PER_KG * ((1.08) ** s_idx)
-        base_cost = float(crop["input_cost_usd_ha"]) + fert_cost
+        crop_input_cost = float(crop["input_cost_usd_ha"])
+        if override.get("input_cost_usd_ha") is not None:
+            crop_input_cost = float(override["input_cost_usd_ha"])
+        base_cost = crop_input_cost + fert_cost
 
         water_mult = float(np.clip(1.0 - rel_def * (1.0 - 0.65 * drought_tol), 0.35, 1.05))
         pest_mult = 0.86 if same_family else 1.03
@@ -309,6 +320,13 @@ def _build_strategy_payload(
         total_cost += base_cost
         total_rev += rev
         prev_family = fam
+
+    if season_overrides:
+        budget_score = 1.0 - float(np.mean(rel_def_list))
+        tol_score = float(np.mean(drought_tol_list))
+        f_water = float(np.clip(0.62 * budget_score + 0.38 * tol_score, 0.0, 1.0))
+        net_margin = total_rev - total_cost
+        f_cost = float(np.clip((net_margin + 200.0) / 3400.0, 0.0, 1.0))
 
     if strategy_id == "A_BASELINE":
         warnings.insert(0, "Continuous monocropping depletes soil nitrogen and raises synthetic fertilizer spend each season.")

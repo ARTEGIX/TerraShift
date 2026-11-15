@@ -293,3 +293,41 @@ def test_predict_and_reload_endpoints():
             "C_COST_MARKET_OPTIMIZED",
         ]
         assert body["optimizer"]["in_memory_compute_ms"] < 200.0
+
+
+def test_project_recalculate_endpoint():
+    with TestClient(app) as client:
+        recalc_payload = {
+            "centroid": {"lat": 8.3114, "lon": 80.4037},
+            "soil_type": "soil_clay_loam",
+            "current_crop": "paddy_rice",
+            "region_id": "region_lk_dryzone",
+            "priority": "water",
+            "planting_month": 10,
+            "area_ha": 2.45,
+            "seasons": [
+                {"crop_id": "paddy_rice", "target_water_mm": 600.0, "input_cost_usd_ha": 350.0},
+                {"crop_id": "mung_bean"},
+                {"crop_id": "cowpea"},
+            ],
+        }
+        resp = client.post("/predict/project-recalculate", json=recalc_payload)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        assert len(data["seasons"]) == 3
+        assert data["seasons"][0]["crop_id"] == "paddy_rice"
+        assert data["seasons"][0]["season_number"] == 1
+        assert data["seasons"][0]["metrics"]["water_use_mm"] == 600.0
+
+        assert "objectives" in data
+        assert "f_soil" in data["objectives"]
+        assert "f_water" in data["objectives"]
+        assert "f_cost" in data["objectives"]
+
+        assert "totals" in data
+        assert "net_margin_usd_ha" in data["totals"]
+        assert "water_use_mm" in data["totals"]
+        assert "nitrogen_balance_kg_ha" in data["totals"]
+
+        assert "warnings" in data
