@@ -18,10 +18,16 @@ class Settings(BaseSettings):
     nasa_timeout_seconds: float = 10.0
 
     earthdata_token: str = ""
+    earthdata_username: str = ""
+    earthdata_password: str = ""
     appeears_base_url: str = "https://appeears.earthdatacloud.nasa.gov/api"
 
     soilgrids_base_url: str = "https://rest.isric.org/soilgrids/v2.0/properties/query"
     soilgrids_timeout_seconds: float = 8.0
+
+    elevation_base_url: str = "https://api.open-meteo.com/v1/elevation"
+    seasonal_forecast_base_url: str = "https://seasonal-api.open-meteo.com/v1/seasonal"
+    external_timeout_seconds: float = 6.0
 
     ga_population: int = 50
     ga_generations: int = 30

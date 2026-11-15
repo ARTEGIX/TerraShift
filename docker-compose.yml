@@ -52,6 +52,8 @@ services:
       GENERAL_MONGO_URI: ${GENERAL_MONGO_URI:-${ATLAS_MONGO_URI:-}/general_db?retryWrites=true&w=majority}
       REDIS_URL: ${REDIS_URL:-redis://redis-cache:6379}
       EARTHDATA_TOKEN: ${EARTHDATA_TOKEN:-}
+      EARTHDATA_USERNAME: ${EARTHDATA_USERNAME:-}
+      EARTHDATA_PASSWORD: ${EARTHDATA_PASSWORD:-}
       APPEEARS_BASE_URL: ${APPEEARS_BASE_URL:-https://appeears.earthdatacloud.nasa.gov/api}
       SOILGRIDS_BASE_URL: ${SOILGRIDS_BASE_URL:-https://rest.isric.org/soilgrids/v2.0/properties/query}
       SOILGRIDS_TIMEOUT_SECONDS: ${SOILGRIDS_TIMEOUT_SECONDS:-8}

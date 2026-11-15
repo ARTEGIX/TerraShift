@@ -48,6 +48,10 @@ class Layer1RegressionOutput:
     dominant_pest_family_code: int               # integer family id in `lookup_store.pest_family_vocab`
     mean_vpd_kpa: float | None = None
     frost_months: int = 0
+    terrain_ls_factor: float = 1.0
+    terrain_slope_pct: float = 0.0
+    seasonal_forecast_precip_mm: float | None = None
+    mean_ecostress_esi: float | None = None
 
     def to_summary_dict(self, current_crop_id: str) -> dict[str, Any]:
         oversupplied = list(self.region_profile.get("oversupplied_crops", []))
@@ -72,6 +76,8 @@ class Layer1RegressionOutput:
             "bare_field_erosion": {
                 "score": round(self.bare_field_erosion_score, 1),
                 "soil_k_factor": float(self.soil_profile["erosion_k_factor"]),
+                "terrain_ls_factor": self.terrain_ls_factor,
+                "terrain_slope_pct": self.terrain_slope_pct,
                 "bare_field_months": self.bare_field_months,
                 "windows": self.erosion_windows,
             },
@@ -169,6 +175,8 @@ def run_layer1_regression(
     planting_month: int = 10,
     store: InMemoryLookupStore = lookup_store,
     soilgrids: dict[str, Any] | None = None,
+    terrain: dict[str, Any] | None = None,
+    seasonal_forecast: dict[str, Any] | None = None,
 ) -> Layer1RegressionOutput:
     """Project 3-season water budgets, Oct soil moisture anomaly, erosion risk & regional penalties."""
     mat = cube.matrix
@@ -179,6 +187,11 @@ def run_layer1_regression(
     soil = _enrich_soil_with_soilgrids(store.resolve_soil_profile(soil_type), soilgrids)
     region = store.resolve_region_profile(region_id, cube.lat)
     mean_vpd_kpa, frost_months = _compute_vpd_and_frost(cube)
+    ls_factor = float((terrain or {}).get("ls_factor", 1.0))
+    slope_pct = float((terrain or {}).get("slope_pct", 0.0))
+    fc_precip_mm = (seasonal_forecast or {}).get("season1_precip_mm")
+    raw_esi = (cube.extra_series or {}).get("ecostress_esi")
+    mean_esi = round(float(np.mean(raw_esi)), 3) if isinstance(raw_esi, list) and raw_esi else None
 
     precip = mat[:, COL_PRECIP]
     et = mat[:, COL_ET]
@@ -216,12 +229,19 @@ def run_layer1_regression(
     season_labels: list[str] = []
 
     vpd_evap_mult = 1.0 + max(0.0, ((mean_vpd_kpa or 0.0) - 1.6) * 0.12)
+    esi_water_mult = 0.90 if (mean_esi is not None and mean_esi < 0.45) else 1.0
     for s in range(3):
         sl = slice(s * 6, (s + 1) * 6)
-        eff_rain = float(np.sum(pred_precip[sl]) * retention)
+        ridge_rain = float(np.sum(pred_precip[sl]))
+        if s == 0 and fc_precip_mm is not None:
+            ridge_rain = 0.65 * ridge_rain + 0.35 * float(fc_precip_mm)
+        eff_rain = ridge_rain * retention
         soil_reserve = float(soil["water_holding_mm_m"]) * 0.65
         evap_loss = float(np.sum(pred_et[sl]) * 0.22 * vpd_evap_mult)
-        season_budgets[s] = max(140.0, (eff_rain + soil_reserve - evap_loss) * (0.85 + 0.15 * whc_factor))
+        season_budgets[s] = max(
+            140.0,
+            (eff_rain + soil_reserve - evap_loss) * (0.85 + 0.15 * whc_factor) * (esi_water_mult if s == 0 else 1.0),
+        )
         first_m = int(future_months[s * 6])
         label_name = "Maha" if first_m in (9, 10, 11, 12, 1, 2) else "Yala"
         season_labels.append(f"Season {s + 1} ({label_name})")
@@ -250,7 +270,7 @@ def run_layer1_regression(
         is_bare = m_num in bare_months
         ndvi_hist = float(np.mean(ndvi[months == m_num])) if np.any(months == m_num) else 0.45
         exposure = (1.25 - ndvi_hist) if is_bare else 0.45
-        index_val = rain_m * k_factor * exposure
+        index_val = rain_m * k_factor * ls_factor * exposure
         level = "high" if (is_bare and index_val > 42.0) else "medium" if index_val > 24.0 else "low"
         erosion_scores.append(min(100.0, index_val * 1.45))
         erosion_windows.append(
@@ -304,4 +324,8 @@ def run_layer1_regression(
         dominant_pest_family_code=dom_family_code,
         mean_vpd_kpa=mean_vpd_kpa,
         frost_months=frost_months,
+        terrain_ls_factor=ls_factor,
+        terrain_slope_pct=slope_pct,
+        seasonal_forecast_precip_mm=float(fc_precip_mm) if fc_precip_mm is not None else None,
+        mean_ecostress_esi=mean_esi,
     )

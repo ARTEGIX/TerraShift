@@ -9,8 +9,10 @@ from app.layer2_evolution import run_layer2_evolution
 from app.main import app
 from app.memory_store import lookup_store
 from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
+from app.forecast_client import parse_seasonal_forecast
 from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
 from app.soil_client import classify_soil_type, parse_soilgrids_response
+from app.terrain_client import compute_slope_and_ls
 
 PAYLOAD = {
     "polygon": {
@@ -199,6 +201,47 @@ def test_layer1_and_layer2_consume_soilgrids_and_vpd():
     assert l1_sg.soil_profile["leaching_factor"] != l1_base.soil_profile["leaching_factor"]
     strategies, _, _ = run_layer2_evolution("paddy_rice", "soil", l1_sg)
     assert len(strategies) == 3
+
+
+def test_terrain_seasonal_forecast_and_hls_ecostress():
+    terrain = compute_slope_and_ls(
+        [(7.87, 80.77), (7.875, 80.775), (7.865, 80.765)],
+        [120.0, 185.0, 118.0],
+    )
+    assert terrain["slope_pct"] > 5.0
+    assert terrain["ls_factor"] > 1.2
+
+    fc = parse_seasonal_forecast(
+        {"daily": {"precipitation_sum": [2.0] * 180, "temperature_2m_max": [33.5] * 180}}
+    )
+    assert fc is not None
+    assert fc["season1_precip_mm"] == 360.0
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    hls_csv = "ID,Latitude,Longitude,Date,HLSS30_VI_020_NDVI\n" + "\n".join(
+        f"id,7.87,80.77,{m}-01,0.71" for m in months
+    )
+    eco_csv = "ID,Latitude,Longitude,Date,ECO_L4T_ESI_002_ESI\n" + "\n".join(
+        f"id,7.87,80.77,{m}-01,0.38" for m in months
+    )
+    agg = aggregate_appeears_csvs(None, None, months, hls_csv=hls_csv, eco_csv=eco_csv)
+    assert agg is not None
+    assert agg["source"] == "appeears_hls_eco_smap"
+    assert agg["ndvi"][0] == 0.71
+    assert agg["ecostress_esi"][0] == 0.38
+
+    cube = build_fallback_cube(7.87, 80.77)
+    cube.extra_series = {"ecostress_esi": agg["ecostress_esi"]}
+    l1 = run_layer1_regression(
+        cube=cube,
+        soil_type="soil_clay_loam",
+        current_crop="paddy_rice",
+        terrain=terrain,
+        seasonal_forecast=fc,
+    )
+    assert l1.terrain_ls_factor == terrain["ls_factor"]
+    assert l1.seasonal_forecast_precip_mm == 360.0
+    assert l1.mean_ecostress_esi == 0.38
 
 
 def test_in_memory_layer1_and_layer2_pipeline_under_200ms():

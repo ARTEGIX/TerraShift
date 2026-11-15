@@ -109,10 +109,11 @@ async def fetch_soilgrids_profile(lat: float, lon: float) -> dict[str, Any] | No
         raw = await _fetch_soilgrids_raw(rlat, rlon)
         profile = parse_soilgrids_response(raw, rlat, rlon)
         if profile is None:
+            log.info("ISRIC SoilGrids returned no surface data for %s (masked/water pixel) — using request soil_type.", key)
             return None
         settings = get_settings()
         await cache.set_json(key, profile, ttl_seconds=settings.cache_ttl_seconds)
         return {**profile, "cached": False}
     except Exception as exc:  # noqa: BLE001
-        log.warning("ISRIC SoilGrids fetch failed for %s (%s) — using request soil_type.", key, exc)
+        log.warning("ISRIC SoilGrids fetch failed for %s (%r) — using request soil_type.", key, exc)
         return None

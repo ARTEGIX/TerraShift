@@ -75,9 +75,10 @@ def evaluate_population_vectorized(
     total_n_balance = np.sum(effective_n, axis=1)  # (P,)
     n_score = np.clip((total_n_balance + 180.0) / 360.0, 0.0, 1.0)
 
-    # Erosion protection: 1 - C_factor weighted by soil K-factor
+    # Erosion protection: 1 - C_factor weighted by soil K-factor & terrain LS slope factor
     k_factor = float(layer1.soil_profile["erosion_k_factor"])
-    cover_score = np.mean(1.0 - erosion_c * (0.85 + k_factor), axis=1)  # (P,)
+    ls_factor = float(layer1.terrain_ls_factor)
+    cover_score = np.clip(np.mean(1.0 - erosion_c * (0.85 + k_factor) * (0.75 + 0.25 * ls_factor), axis=1), 0.0, 1.0)
 
     # Pest rotation bonus: penalize consecutive identical pest families and dominant regional pest family
     same_12 = (pop_fam[:, 0] == pop_fam[:, 1]).astype(np.float64)

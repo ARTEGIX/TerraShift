@@ -24,12 +24,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import cache
 from app.config import get_settings
+from app.forecast_client import fetch_seasonal_forecast
 from app.layer1_regression import run_layer1_regression
 from app.layer2_evolution import run_layer2_evolution
 from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
 from app.schemas import PredictRequest, PredictResponse
 from app.soil_client import fetch_soilgrids_profile
+from app.terrain_client import fetch_terrain_profile
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("agronomy-engine")
@@ -96,9 +98,12 @@ async def predict(req: PredictRequest) -> PredictResponse:
     t0 = time.perf_counter()
 
     # Step 0: Spatial-Temporal Data Fusion (~1km Redis Grid Cache + 36m NumPy array)
-    cube, soilgrids = await asyncio.gather(
+    outer_ring = req.polygon.coordinates[0] if req.polygon.coordinates else None
+    cube, soilgrids, terrain, seasonal_forecast = await asyncio.gather(
         fetch_fused_climate(req.centroid.lat, req.centroid.lon),
         fetch_soilgrids_profile(req.centroid.lat, req.centroid.lon),
+        fetch_terrain_profile(req.centroid.lat, req.centroid.lon, outer_ring),
+        fetch_seasonal_forecast(req.centroid.lat, req.centroid.lon),
     )
 
     # Layer 1: In-Memory Regression Engine
@@ -116,6 +121,8 @@ async def predict(req: PredictRequest) -> PredictResponse:
         planting_month=req.planting_month,
         store=lookup_store,
         soilgrids=soilgrids,
+        terrain=terrain,
+        seasonal_forecast=seasonal_forecast,
     )
 
     # Layer 2: In-Memory Multi-Objective Evolutionary Algorithm (pop=50, gen=30)
@@ -151,6 +158,8 @@ async def predict(req: PredictRequest) -> PredictResponse:
             "priority": req.priority,
             "planting_month": req.planting_month,
             **({"soilgrids": soilgrids} if soilgrids else {}),
+            **({"terrain": terrain} if terrain else {}),
+            **({"seasonal_forecast": seasonal_forecast} if seasonal_forecast else {}),
         },
         climate={
             "source": cube.source,

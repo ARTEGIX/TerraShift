@@ -233,6 +233,8 @@ def build_cube_from_power(
                 extra_series[out_key] = _interpolate_series(series[p], ym_keys, p).tolist()
             except ValueError:
                 pass
+    if appeears_override and isinstance(appeears_override.get("ecostress_esi"), list):
+        extra_series["ecostress_esi"] = appeears_override["ecostress_esi"]
 
     months: list[str] = []
     month_numbers = np.zeros(FUSION_MONTHS, dtype=np.int32)
@@ -350,5 +352,5 @@ async def fetch_fused_climate(lat: float, lon: float) -> FusedClimateCube:
         await cache.set_json(key, cube.to_cache_dict(), ttl_seconds=get_settings().cache_ttl_seconds)
         return cube
     except Exception as exc:  # noqa: BLE001
-        log.warning("NASA POWER fetch failed for %s (%s) — using deterministic 36m fallback.", key, exc)
+        log.warning("NASA POWER fetch failed for %s (%r) — using deterministic 36m fallback.", key, exc)
         return build_fallback_cube(rlat, rlon, key)
