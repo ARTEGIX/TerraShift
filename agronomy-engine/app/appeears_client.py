@@ -95,9 +95,12 @@ def _window_years(months: list[str] | None = None) -> tuple[int, int]:
 
 
 def _is_valid_appeears_payload(payload: Any, expected_months: list[str] | None = None) -> bool:
-    if not isinstance(payload, dict) or ("smap_moisture_pct" not in payload and "ndvi" not in payload):
+if not isinstance(payload, dict):
         return False
     target = expected_months if expected_months is not None else target_36_months()
+    series = [payload.get("smap_moisture_pct"), payload.get("ndvi")]
+    if not any(isinstance(values, list) and len(values) == len(target) for values in series):
+        return False
     return payload.get("months") == target
 
 
