@@ -51,12 +51,18 @@ export async function ensureRegion(
   lat: number,
   lon: number,
   polygon?: Polygon,
+  forceRefresh = false,
 ): Promise<EnsureRegionResponse | null> {
   try {
     const res = await fetch(`${env.AGRONOMY_ENGINE_URL}/regions/ensure`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lat, lon, ...(polygon ? { polygon } : {}) }),
+      body: JSON.stringify({
+        lat,
+        lon,
+        ...(polygon ? { polygon } : {}),
+        ...(forceRefresh ? { force_refresh: true } : {}),
+      }),
       signal: AbortSignal.timeout(env.AGRONOMY_TIMEOUT_MS),
     });
     if (!res.ok) {

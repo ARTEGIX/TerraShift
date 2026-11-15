@@ -160,12 +160,34 @@ export async function logout(): Promise<void> {
 
 const cropsCache = new Map<string, Promise<CropInfo[]>>();
 
+/** Built-in general crop set used when the regional crop API returns empty or is unreachable. */
+export const GENERAL_CROPS_FALLBACK: CropInfo[] = [
+  { id: "paddy_rice", name: "Paddy Rice", category: "cash_crop", water_demand_mm: 1200, nitrogen_impact_kg_ha: -90, root_depth_cm: 30, growth_days: 120 },
+  { id: "maize", name: "Maize", category: "cash_crop", water_demand_mm: 550, nitrogen_impact_kg_ha: -110, root_depth_cm: 120, growth_days: 110 },
+  { id: "mung_bean", name: "Mung Bean", category: "legume", water_demand_mm: 350, nitrogen_impact_kg_ha: 42, root_depth_cm: 60, growth_days: 70 },
+  { id: "cowpea", name: "Cowpea", category: "legume", water_demand_mm: 380, nitrogen_impact_kg_ha: 50, root_depth_cm: 90, growth_days: 80 },
+  { id: "groundnut", name: "Groundnut", category: "legume", water_demand_mm: 480, nitrogen_impact_kg_ha: 58, root_depth_cm: 55, growth_days: 110 },
+  { id: "chickpea", name: "Chickpea", category: "legume", water_demand_mm: 340, nitrogen_impact_kg_ha: 45, root_depth_cm: 100, growth_days: 100 },
+  { id: "finger_millet", name: "Finger Millet", category: "drought_tolerant", water_demand_mm: 340, nitrogen_impact_kg_ha: -35, root_depth_cm: 75, growth_days: 100 },
+  { id: "sesame", name: "Sesame", category: "drought_tolerant", water_demand_mm: 300, nitrogen_impact_kg_ha: -30, root_depth_cm: 120, growth_days: 90 },
+  { id: "cassava", name: "Cassava", category: "drought_tolerant", water_demand_mm: 680, nitrogen_impact_kg_ha: -65, root_depth_cm: 110, growth_days: 240 },
+  { id: "chilli", name: "Chilli", category: "cash_crop", water_demand_mm: 600, nitrogen_impact_kg_ha: -115, root_depth_cm: 60, growth_days: 150 },
+  { id: "onion", name: "Onion", category: "cash_crop", water_demand_mm: 450, nitrogen_impact_kg_ha: -95, root_depth_cm: 30, growth_days: 110 },
+  { id: "sunn_hemp", name: "Sunn Hemp", category: "cover_crop", water_demand_mm: 280, nitrogen_impact_kg_ha: 110, root_depth_cm: 150, growth_days: 60 },
+];
+
 /** Crop list from lookup_db (via main-service), optionally filtered to a region's viable crops. */
-export function fetchCrops(regionId?: string): Promise<CropInfo[]> {
+export function fetchCrops(regionId?: string, forceRefresh = false): Promise<CropInfo[]> {
   const key = regionId?.trim() || "__global__";
+  if (forceRefresh) {
+    cropsCache.delete(key);
+  }
   let p = cropsCache.get(key);
   if (!p) {
-    const qs = regionId?.trim() ? `?region_id=${encodeURIComponent(regionId.trim())}` : "";
+    const params = new URLSearchParams();
+    if (regionId?.trim()) params.set("region_id", regionId.trim());
+    if (forceRefresh) params.set("refresh", "1");
+    const qs = params.toString() ? `?${params.toString()}` : "";
     p = request<{ crops: CropInfo[] }>(`/crops${qs}`, {}, 15_000)
       .then(({ crops }) => crops.map((c) => ({ ...c, id: c.id ?? String(c._id) })))
       .catch((err) => {
@@ -185,13 +207,23 @@ export interface EnsureRegionResult {
   viable_crop_ids: string[];
 }
 
-export async function ensureRegion(lat: number, lon: number, polygon?: Polygon): Promise<EnsureRegionResult | null> {
+export async function ensureRegion(
+  lat: number,
+  lon: number,
+  polygon?: Polygon,
+  forceRefresh = false,
+): Promise<EnsureRegionResult | null> {
   try {
     return await request<EnsureRegionResult>(
       "/regions/ensure",
       {
         method: "POST",
-        body: JSON.stringify({ lat, lon, ...(polygon ? { polygon } : {}) }),
+        body: JSON.stringify({
+          lat,
+          lon,
+          ...(polygon ? { polygon } : {}),
+          ...(forceRefresh ? { force_refresh: true } : {}),
+        }),
       },
       15_000,
     );

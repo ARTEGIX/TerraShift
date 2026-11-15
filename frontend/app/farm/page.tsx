@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Coins, Droplets, Pencil, Sprout } from "lucide-react";
+import { ArrowLeft, ArrowRight, Coins, Droplets, Pencil, RefreshCw, Sprout } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { ApiError, analyseFarm, createFarm, ensureRegion, fetchCrops, getToken, prefetchSatellite } from "@/lib/api";
+import { ApiError, GENERAL_CROPS_FALLBACK, analyseFarm, createFarm, ensureRegion, fetchCrops, getToken, prefetchSatellite } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
@@ -43,22 +43,42 @@ export default function FarmWizardPage() {
   const [draft, update, loaded] = useDraft();
   const [crops, setCrops] = useState<CropInfo[]>([]);
   const [cropsError, setCropsError] = useState<string | null>(null);
+  const [cropsFallbackMsg, setCropsFallbackMsg] = useState<string | null>(null);
+  const [refreshingCrops, setRefreshingCrops] = useState(false);
   const [tried, setTried] = useState<Record<number, boolean>>({});
   const [drawSignal, setDrawSignal] = useState(0);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  function loadCrops(regionId?: string | null) {
+  async function loadCrops(regionId?: string | null, forceRefresh = false) {
     setCropsError(null);
-    fetchCrops(regionId ?? draft.regionId ?? undefined)
-      .then((list) => {
+    setRefreshingCrops(true);
+    try {
+      const targetRegion = regionId ?? draft.regionId ?? undefined;
+      if (forceRefresh && field?.centroid) {
+        const reg = await ensureRegion(field.centroid.lat, field.centroid.lon, draft.polygon ?? undefined, true);
+        if (reg?.region_id) {
+          update({ regionId: reg.region_id, ...(draft.soilType ? {} : { soilType: reg.soil_type }) });
+        }
+      }
+      const list = await fetchCrops(targetRegion, forceRefresh);
+      if (list && list.length > 0) {
         setCrops(list);
+        setCropsFallbackMsg(null);
         if (draft.currentCrop && !list.some((c) => c.id === draft.currentCrop)) {
           update({ currentCrop: null });
         }
-      })
-      .catch((err: Error) => setCropsError(err.message));
+      } else {
+        setCrops(GENERAL_CROPS_FALLBACK);
+        setCropsFallbackMsg("No regional crops returned from API — showing the general crop set.");
+      }
+    } catch {
+      setCrops(GENERAL_CROPS_FALLBACK);
+      setCropsFallbackMsg("Couldn't load regional crops from API — showing the general crop set.");
+    } finally {
+      setRefreshingCrops(false);
+    }
   }
   useEffect(() => {
     if (!getToken()) {
@@ -249,10 +269,28 @@ export default function FarmWizardPage() {
         {step === 1 && (
           <div className="space-y-8">
             <Question label="Which crop is in the field now?" error={errors.crop}>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                {cropsFallbackMsg ? (
+                  <p className="text-[13px] text-amber-700">{cropsFallbackMsg}</p>
+                ) : (
+                  <span className="text-[13px] text-ink-3">
+                    {draft.regionId ? "Showing crops suited for your region" : "Showing general crop catalog"}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void loadCrops(draft.regionId, true)}
+                  disabled={refreshingCrops}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 py-1.5 text-[13px] font-medium text-ink transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  <RefreshCw className={`size-3.5 ${refreshingCrops ? "animate-spin" : ""}`} aria-hidden />
+                  {refreshingCrops ? "Refreshing…" : "Refresh crops"}
+                </button>
+              </div>
               {cropsError && (
                 <Notice tone="error">
                   <p>Couldn&apos;t load the crop list. {cropsError}</p>
-                  <button type="button" onClick={() => loadCrops(draft.regionId)} className="btn-plain mt-1 text-[15px]">
+                  <button type="button" onClick={() => void loadCrops(draft.regionId, true)} className="btn-plain mt-1 text-[15px]">
                     Try again
                   </button>
                 </Notice>
