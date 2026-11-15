@@ -141,7 +141,7 @@ def test_soilgrids_parser_and_classifier():
 def test_appeears_payload_aggregation_and_power_override():
     payload = build_point_task_payload(7.87, 80.77, 2023, 2025)
     assert payload["task_type"] == "point"
-    assert len(payload["params"]["layers"]) == 2
+    assert len(payload["params"]["layers"]) == 4
 
     months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
     modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
