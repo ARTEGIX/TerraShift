@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
 
     atlas_mongo_uri: str = ""
     lookup_mongo_uri: str = ""
@@ -16,6 +16,18 @@ class Settings(BaseSettings):
 
     nasa_power_base_url: str = "https://power.larc.nasa.gov/api/temporal/monthly/point"
     nasa_timeout_seconds: float = 10.0
+
+    earthdata_token: str = ""
+    earthdata_username: str = ""
+    earthdata_password: str = ""
+    appeears_base_url: str = "https://appeears.earthdatacloud.nasa.gov/api"
+
+    soilgrids_base_url: str = "https://rest.isric.org/soilgrids/v2.0/properties/query"
+    soilgrids_timeout_seconds: float = 8.0
+
+    elevation_base_url: str = "https://api.open-meteo.com/v1/elevation"
+    seasonal_forecast_base_url: str = "https://seasonal-api.open-meteo.com/v1/seasonal"
+    external_timeout_seconds: float = 6.0
 
     ga_population: int = 50
     ga_generations: int = 30

@@ -8,7 +8,11 @@ from app.layer1_regression import run_layer1_regression
 from app.layer2_evolution import run_layer2_evolution
 from app.main import app
 from app.memory_store import lookup_store
+from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
+from app.forecast_client import parse_seasonal_forecast
 from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
+from app.soil_client import classify_soil_type, parse_soilgrids_response
+from app.terrain_client import compute_slope_and_ls
 
 PAYLOAD = {
     "polygon": {
@@ -85,6 +89,159 @@ def test_build_cube_from_power_interpolates_fill_values():
     cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
     assert cube.matrix.shape == (36, 6)
     assert cube.matrix[5, 0] == 32.0
+    assert np.isclose(cube.matrix[0, 2], 5.4 / 3.6)
+
+
+def test_build_cube_from_power_with_optional_t2m_min_and_rh2m():
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 32.0 for k in ym_keys},
+                "T2M_MIN": {k: 23.5 for k in ym_keys},
+                "RH2M": {k: 78.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.5 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {
+            "ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"},
+            "EVPTRNS": {"units": "MJ/m^2/day"},
+        },
+    }
+    cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
+    records = cube.to_monthly_records()
+    assert np.isclose(cube.matrix[0, 2], 5.0)
+    assert records[0]["t2m_min_c"] == 23.5
+    assert records[0]["rh2m_pct"] == 78.0
+
+
+def test_soilgrids_parser_and_classifier():
+    raw = {
+        "properties": {
+            "layers": [
+                {"name": "clay", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 323}}]},
+                {"name": "sand", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 424}}]},
+                {"name": "silt", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 253}}]},
+                {"name": "phh2o", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 57}}]},
+                {"name": "soc", "unit_measure": {"d_factor": 10}, "depths": [{"values": {"mean": 478}}]},
+            ]
+        }
+    }
+    parsed = parse_soilgrids_response(raw, 7.87, 80.77)
+    assert parsed is not None
+    assert parsed["clay_pct"] == 32.3
+    assert parsed["ph"] == 5.7
+    assert parsed["inferred_soil_type"] == "soil_clay_loam"
+    assert classify_soil_type(10.0, 70.0, 5.0) == "soil_degraded_dry"
+    assert classify_soil_type(15.0, 60.0, 15.0) == "soil_sandy_loam"
+
+
+def test_appeears_payload_aggregation_and_power_override():
+    payload = build_point_task_payload(7.87, 80.77, 2023, 2025)
+    assert payload["task_type"] == "point"
+    assert len(payload["params"]["layers"]) == 4
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+    modis_csv += "\n".join(f"id,7.87,80.77,{m}-01,0.62" for i, m in enumerate(months) if i != 10)
+    smap_csv = "ID,Latitude,Longitude,Date,SPL4SMGP_008_Geophysical_Data_sm_rootzone_pctl\n"
+    smap_csv += "\n".join(f"id,7.87,80.77,{m}-01,44.5" for m in months)
+
+    agg = aggregate_appeears_csvs(modis_csv, smap_csv, months)
+    assert agg is not None
+    assert len(agg["ndvi"]) == 36
+    assert agg["ndvi"][10] == 0.62
+    assert agg["smap_moisture_pct"][0] == 44.5
+
+    ym_keys = [m.replace("-", "") for m in months]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 31.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 4.0 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {"EVPTRNS": {"units": "MJ/m^2/day"}},
+    }
+    cube = build_cube_from_power(raw, 7.87, 80.77, "nasa:grid:7.87:80.77", appeears_override=agg)
+    assert cube.source == "nasa_power+appeears"
+    assert np.isclose(cube.matrix[0, 4], 44.5)
+    assert np.isclose(cube.matrix[0, 5], 0.62)
+
+
+def test_layer1_and_layer2_consume_soilgrids_and_vpd():
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 36.0 for k in ym_keys},
+                "T2M_MIN": {k: 24.0 for k in ym_keys},
+                "RH2M": {k: 40.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.0 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+            }
+        },
+        "parameters": {"ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"}, "EVPTRNS": {"units": "MJ/m^2/day"}},
+    }
+    cube = build_cube_from_power(raw, 7.87, 80.77, "nasa:grid:7.87:80.77")
+    soilgrids = {"clay_pct": 18.0, "sand_pct": 62.0, "silt_pct": 20.0, "ph": 5.2, "soc_g_kg": 10.0}
+
+    l1_base = run_layer1_regression(cube=cube, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_sg = run_layer1_regression(
+        cube=cube, soil_type="soil_clay_loam", current_crop="paddy_rice", soilgrids=soilgrids
+    )
+
+    assert l1_sg.mean_vpd_kpa is not None and l1_sg.mean_vpd_kpa > 1.6
+    assert l1_sg.soil_profile["ph"] == 5.2
+    assert l1_sg.soil_profile["leaching_factor"] != l1_base.soil_profile["leaching_factor"]
+    strategies, _, _ = run_layer2_evolution("paddy_rice", "soil", l1_sg)
+    assert len(strategies) == 3
+
+
+def test_terrain_seasonal_forecast_and_hls_ecostress():
+    terrain = compute_slope_and_ls(
+        [(7.87, 80.77), (7.875, 80.775), (7.865, 80.765)],
+        [120.0, 185.0, 118.0],
+    )
+    assert terrain["slope_pct"] > 5.0
+    assert terrain["ls_factor"] > 1.2
+
+    fc = parse_seasonal_forecast(
+        {"daily": {"precipitation_sum": [2.0] * 180, "temperature_2m_max": [33.5] * 180}}
+    )
+    assert fc is not None
+    assert fc["season1_precip_mm"] == 360.0
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    hls_csv = "ID,Latitude,Longitude,Date,HLSS30_VI_020_NDVI\n" + "\n".join(
+        f"id,7.87,80.77,{m}-01,0.71" for m in months
+    )
+    eco_csv = "ID,Latitude,Longitude,Date,ECO_L4T_ESI_002_ESI\n" + "\n".join(
+        f"id,7.87,80.77,{m}-01,0.38" for m in months
+    )
+    agg = aggregate_appeears_csvs(None, None, months, hls_csv=hls_csv, eco_csv=eco_csv)
+    assert agg is not None
+    assert agg["source"] == "appeears_hls_eco_smap"
+    assert agg["ndvi"][0] == 0.71
+    assert agg["ecostress_esi"][0] == 0.38
+
+    cube = build_fallback_cube(7.87, 80.77)
+    cube.extra_series = {"ecostress_esi": agg["ecostress_esi"]}
+    l1 = run_layer1_regression(
+        cube=cube,
+        soil_type="soil_clay_loam",
+        current_crop="paddy_rice",
+        terrain=terrain,
+        seasonal_forecast=fc,
+    )
+    assert l1.terrain_ls_factor == terrain["ls_factor"]
+    assert l1.seasonal_forecast_precip_mm == 360.0
+    assert l1.mean_ecostress_esi == 0.38
 
 
 def test_in_memory_layer1_and_layer2_pipeline_under_200ms():

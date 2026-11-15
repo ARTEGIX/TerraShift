@@ -75,9 +75,10 @@ def evaluate_population_vectorized(
     total_n_balance = np.sum(effective_n, axis=1)  # (P,)
     n_score = np.clip((total_n_balance + 180.0) / 360.0, 0.0, 1.0)
 
-    # Erosion protection: 1 - C_factor weighted by soil K-factor
+    # Erosion protection: 1 - C_factor weighted by soil K-factor & terrain LS slope factor
     k_factor = float(layer1.soil_profile["erosion_k_factor"])
-    cover_score = np.mean(1.0 - erosion_c * (0.85 + k_factor), axis=1)  # (P,)
+    ls_factor = float(layer1.terrain_ls_factor)
+    cover_score = np.clip(np.mean(1.0 - erosion_c * (0.85 + k_factor) * (0.75 + 0.25 * ls_factor), axis=1), 0.0, 1.0)
 
     # Pest rotation bonus: penalize consecutive identical pest families and dominant regional pest family
     same_12 = (pop_fam[:, 0] == pop_fam[:, 1]).astype(np.float64)
@@ -90,7 +91,19 @@ def evaluate_population_vectorized(
     cover_crop_count = np.sum(pop_cat == 2, axis=1)
     cover_overuse_pen = np.maximum(0.0, cover_crop_count - 1.0) * 0.28
 
-    f_soil = np.clip(0.42 * n_score + 0.28 * cover_score + 0.30 * rotation_bonus - cover_overuse_pen, 0.0, 1.0)
+    # SoilGrids pH buffering: acidic (<5.5) or alkaline (>7.8) soils reward legumes/cover crops
+    soil_ph = layer1.soil_profile.get("ph")
+    ph_buffer_bonus = np.zeros_like(n_score)
+    ph_yield_mult = 1.0
+    if soil_ph is not None:
+        ph_val = float(soil_ph)
+        if ph_val < 5.5 or ph_val > 7.8:
+            legume_or_cover = np.sum((pop_cat == 1) | (pop_cat == 2), axis=1)
+            ph_buffer_bonus = np.minimum(0.08, legume_or_cover * 0.03)
+        if ph_val < 5.0 or ph_val > 8.2:
+            ph_yield_mult = 0.94
+
+    f_soil = np.clip(0.42 * n_score + 0.28 * cover_score + 0.30 * rotation_bonus + ph_buffer_bonus - cover_overuse_pen, 0.0, 1.0)
 
     # ------------------------------------------------------------------
     # 2. F_water: Seasonal water budget compliance + drought tolerance
@@ -111,7 +124,7 @@ def evaluate_population_vectorized(
     pest_yield_mult[:, 1] *= np.where(same_12 > 0, 0.88, 1.03)
     pest_yield_mult[:, 2] *= np.where(same_23 > 0, 0.85, 1.04)
 
-    adj_revenue = base_rev * water_yield_mult * pest_yield_mult * (1.0 - oversupply_pen)
+    adj_revenue = base_rev * water_yield_mult * pest_yield_mult * ph_yield_mult * (1.0 - oversupply_pen)
 
     # Biological N credit carried from season t to season t+1 reduces synthetic urea cost
     n_credit_s2 = np.maximum(0.0, n_impact[:, 0]) * LEGUME_N_CARRYOVER

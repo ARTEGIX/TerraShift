@@ -12,6 +12,7 @@ Pipeline (`POST /predict`):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -23,10 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import cache
 from app.config import get_settings
+from app.forecast_client import fetch_seasonal_forecast
 from app.layer1_regression import run_layer1_regression
 from app.layer2_evolution import _build_strategy_payload, run_layer2_evolution
 from app.memory_store import lookup_store
 from app.nasa_fusion import fetch_fused_climate
+from app.soil_client import fetch_soilgrids_profile
+from app.terrain_client import fetch_terrain_profile
 from app.schemas import PredictRequest, PredictResponse, ProjectRecalcRequest, ProjectRecalcResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -94,17 +98,31 @@ async def predict(req: PredictRequest) -> PredictResponse:
     t0 = time.perf_counter()
 
     # Step 0: Spatial-Temporal Data Fusion (~1km Redis Grid Cache + 36m NumPy array)
-    cube = await fetch_fused_climate(req.centroid.lat, req.centroid.lon)
+    outer_ring = req.polygon.coordinates[0] if req.polygon.coordinates else None
+    cube, soilgrids, terrain, seasonal_forecast = await asyncio.gather(
+        fetch_fused_climate(req.centroid.lat, req.centroid.lon),
+        fetch_soilgrids_profile(req.centroid.lat, req.centroid.lon),
+        fetch_terrain_profile(req.centroid.lat, req.centroid.lon, outer_ring),
+        fetch_seasonal_forecast(req.centroid.lat, req.centroid.lon),
+    )
 
     # Layer 1: In-Memory Regression Engine
     t_compute = time.perf_counter()
+    effective_soil_type = (
+        soilgrids["inferred_soil_type"]
+        if soilgrids and "soil_type" not in req.model_fields_set
+        else req.soil_type
+    )
     layer1 = run_layer1_regression(
         cube=cube,
-        soil_type=req.soil_type,
+        soil_type=effective_soil_type,
         current_crop=req.current_crop,
         region_id=req.region_id,
         planting_month=req.planting_month,
         store=lookup_store,
+        soilgrids=soilgrids,
+        terrain=terrain,
+        seasonal_forecast=seasonal_forecast,
     )
 
     # Layer 2: In-Memory Multi-Objective Evolutionary Algorithm (pop=50, gen=30)
@@ -139,6 +157,9 @@ async def predict(req: PredictRequest) -> PredictResponse:
             "region_id": layer1.region_profile["_id"],
             "priority": req.priority,
             "planting_month": req.planting_month,
+            **({"soilgrids": soilgrids} if soilgrids else {}),
+            **({"terrain": terrain} if terrain else {}),
+            **({"seasonal_forecast": seasonal_forecast} if seasonal_forecast else {}),
         },
         climate={
             "source": cube.source,
