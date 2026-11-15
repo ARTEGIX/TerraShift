@@ -133,7 +133,7 @@ export interface PredictResponse {
   area_ha: number | null;
   inputs: Record<string, unknown>;
   climate: {
-    source: "nasa_power" | "fallback";
+    source: "nasa_power" | "nasa_power+appeears" | "fallback";
     grid_key: string;
     lat: number;
     lon: number;
