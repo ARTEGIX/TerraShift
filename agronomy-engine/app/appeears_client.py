@@ -265,6 +265,7 @@ async def _download_and_cache_bundle(
 
     aggregated = aggregate_appeears_csvs(modis_csv, smap_csv, months, hls_csv=hls_csv, eco_csv=eco_csv)
     if aggregated is None:
+        await cache.delete_key(pending_key)
         return None
 
     await cache.set_json(
