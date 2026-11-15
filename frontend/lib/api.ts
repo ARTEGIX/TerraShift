@@ -10,9 +10,13 @@ import type {
   Centroid,
   CropInfo,
   Farm,
+  FarmDetailResponse,
   Polygon,
   Priority,
+  Project,
+  ProjectDetailResponse,
   SoilType,
+  StrategyId,
   UserProfile,
 } from "./types";
 
@@ -178,14 +182,34 @@ export interface NewFarm {
   soil_type: SoilType;
   current_crop: string;
   default_priority?: Priority;
+  planting_month?: number;
+}
+
+export interface FarmPatch {
+  name?: string;
+  polygon?: Polygon;
+  centroid?: Centroid;
+  region_id?: string;
+  soil_type?: SoilType | string;
+  current_crop?: string;
+  default_priority?: Priority;
+  planting_month?: number;
 }
 
 export async function listFarms(): Promise<Farm[]> {
   return (await request<{ farms: Farm[] }>("/farms")).farms;
 }
 
+export async function getFarmDetail(id: string): Promise<FarmDetailResponse> {
+  return request<FarmDetailResponse>(`/farms/${encodeURIComponent(id)}`);
+}
+
 export async function createFarm(input: NewFarm): Promise<Farm> {
   return (await request<{ farm: Farm }>("/farms", { method: "POST", body: JSON.stringify(input) })).farm;
+}
+
+export async function updateFarm(id: string, patch: FarmPatch): Promise<Farm> {
+  return (await request<{ farm: Farm }>(`/farms/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) })).farm;
 }
 
 export async function deleteFarm(id: string): Promise<void> {
@@ -236,4 +260,54 @@ export async function listAnalyses(farmId?: string): Promise<AnalysisSummary[]> 
 
 export async function fetchAnalysis(id: string): Promise<AnalysisRecord> {
   return request<AnalysisRecord>(`/simulation-runs/${encodeURIComponent(id)}`);
+}
+
+export async function deleteAnalysis(id: string): Promise<void> {
+  await request<void>(`/simulation-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/* ------------------------------------------------------------------ projects */
+
+export interface ProjectSeasonInput {
+  crop_id: string;
+  target_water_mm?: number | null;
+  input_cost_usd_ha?: number | null;
+}
+
+export async function createProject(input: {
+  report_id: string;
+  selected_strategy: "A" | "B" | "C" | StrategyId;
+  name: string;
+}): Promise<Project> {
+  return (await request<{ project: Project }>("/projects", { method: "POST", body: JSON.stringify(input) })).project;
+}
+
+export async function listProjects(params?: { farm_id?: string; report_id?: string }): Promise<Project[]> {
+  const qs = new URLSearchParams();
+  if (params?.farm_id) qs.set("farm_id", params.farm_id);
+  if (params?.report_id) qs.set("report_id", params.report_id);
+  const q = qs.toString() ? `?${qs.toString()}` : "";
+  return (await request<{ projects: Project[] }>(`/projects${q}`)).projects;
+}
+
+export async function getProject(id: string): Promise<ProjectDetailResponse> {
+  return request<ProjectDetailResponse>(`/projects/${encodeURIComponent(id)}`);
+}
+
+export async function updateProject(id: string, patch: { name?: string; seasons?: ProjectSeasonInput[] }): Promise<Project> {
+  return (await request<{ project: Project }>(`/projects/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) })).project;
+}
+
+export async function recalculateProject(id: string, seasons: ProjectSeasonInput[]): Promise<Project> {
+  return (
+    await request<{ project: Project }>(
+      `/projects/${encodeURIComponent(id)}/recalculate`,
+      { method: "POST", body: JSON.stringify({ seasons }) },
+      ANALYSIS_TIMEOUT_MS,
+    )
+  ).project;
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await request<void>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

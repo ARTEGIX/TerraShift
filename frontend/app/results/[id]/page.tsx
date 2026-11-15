@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, Layers, Printer, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronDown, CloudSun, FolderPlus, Layers, Printer, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -9,8 +9,9 @@ import ActionPlan from "@/components/strategy/ActionPlan";
 import ExplainPanel from "@/components/strategy/ExplainPanel";
 import PlanCharts from "@/components/strategy/PlanCharts";
 import StrategyCard, { CropSequence, PLAN_COLOR, PLAN_SHORT, SignalList, signalsFor } from "@/components/strategy/StrategyCard";
+import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { PageLoader } from "@/components/ui/Loaders";
-import { ApiError, fetchAnalysis, fetchCrops } from "@/lib/api";
+import { ApiError, createProject, deleteAnalysis, fetchAnalysis, fetchCrops } from "@/lib/api";
 import { MONTHS_LONG, cleanText, prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisRecord, type CropInfo, type Priority, type SoilType, type StrategyId } from "@/lib/types";
 
@@ -31,6 +32,13 @@ export default function ResultsPage() {
   const [crops, setCrops] = useState<CropInfo[]>([]);
   const [selected, setSelected] = useState<StrategyId | null>(null);
   const [tab, setTab] = useState<Tab>("plans");
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectPlan, setProjectPlan] = useState<StrategyId>("B_SOIL_WATER_RESILIENCE");
+  const [projectName, setProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingReport, setDeletingReport] = useState(false);
 
   useEffect(() => {
     setRecord(null);
@@ -40,6 +48,8 @@ export default function ResultsPage() {
       .then((r) => {
         setRecord(r);
         setSelected(r.prediction.recommended_strategy);
+        setProjectPlan(r.prediction.recommended_strategy);
+        setProjectName("3-Season Field Project");
       })
       .catch((err) => {
         if (err instanceof ApiError && err.isAuth) router.replace(`/login?next=/results/${encodeURIComponent(id)}`);
@@ -95,21 +105,93 @@ export default function ResultsPage() {
     document.getElementById("tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function openCreateProject(planId?: StrategyId) {
+    const chosen = planId ?? current.id;
+    setProjectPlan(chosen);
+    setProjectError(null);
+    if (!projectName.trim()) {
+      setProjectName(`${cropNow ? `${cropNow} ` : ""}3-Season Project`);
+    }
+    setProjectModalOpen(true);
+  }
+
+  async function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!projectName.trim()) {
+      setProjectError("Please enter a project name.");
+      return;
+    }
+    setCreatingProject(true);
+    setProjectError(null);
+    try {
+      const proj = await createProject({
+        report_id: record!.id,
+        selected_strategy: projectPlan,
+        name: projectName.trim(),
+      });
+      router.push(`/projects/${proj.id}`);
+    } catch (err) {
+      setProjectError((err as Error).message);
+      setCreatingProject(false);
+    }
+  }
+
+  async function handleDeleteReport() {
+    setDeletingReport(true);
+    try {
+      await deleteAnalysis(record!.id);
+      router.push(record!.farm_id ? `/farms/${record!.farm_id}` : "/farms");
+    } catch (err) {
+      setError((err as Error).message);
+      setDeletingReport(false);
+      setDeleteModalOpen(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-2xl px-4 pb-20 pt-4 sm:px-6">
       {/* Top actions */}
-      <nav className="no-print flex items-center justify-between">
-        <Link href="/farms" className="btn-plain -ml-1 text-[15px]">
-          <ArrowLeft className="size-5" aria-hidden /> My fields
-        </Link>
-        <button type="button" onClick={() => window.print()} aria-label="Print this plan" className="grid size-11 place-items-center rounded-full text-ink-2 hover:bg-black/[0.05]">
-          <Printer className="size-5" aria-hidden />
-        </button>
+      <nav className="no-print flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Link href={record.farm_id ? `/farms/${record.farm_id}` : "/farms"} className="btn-plain -ml-1 text-[15px]">
+            <ArrowLeft className="size-5" aria-hidden /> {record.farm_id ? "Back to field" : "My fields"}
+          </Link>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openCreateProject()}
+            className="btn-primary !min-h-10 !px-4 text-[14px]"
+          >
+            <FolderPlus className="size-4" aria-hidden /> Create Project
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            aria-label="Delete report"
+            className="grid size-10 place-items-center rounded-full text-ink-3 hover:bg-red-50 hover:text-red-600"
+          >
+            <Trash2 className="size-4" aria-hidden />
+          </button>
+          <button type="button" onClick={() => window.print()} aria-label="Print this plan" className="grid size-10 place-items-center rounded-full text-ink-2 hover:bg-black/[0.05]">
+            <Printer className="size-5" aria-hidden />
+          </button>
+        </div>
       </nav>
 
       {/* Title */}
       <header className="mt-3">
-        <h1 className="text-[34px] font-bold leading-tight tracking-tight text-ink">Your plan</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-black/[0.06] px-3 py-1 text-[12px] font-semibold text-ink-2">
+            Read-Only Report Snapshot
+          </span>
+          {record.farm_id && (
+            <Link href={`/farms/${record.farm_id}`} className="rounded-full bg-leaf-50 px-3 py-1 text-[12px] font-semibold text-leaf-700 hover:bg-leaf-100">
+              View Field →
+            </Link>
+          )}
+        </div>
+        <h1 className="mt-2 text-[34px] font-bold leading-tight tracking-tight text-ink">Your plan</h1>
         <p className="mt-1 text-[15px] text-ink-3">
           {[
             p.area_ha ? `${p.area_ha} ha` : null,
@@ -192,6 +274,9 @@ export default function ResultsPage() {
 
             <ExplainPanel key={current.id} strategy={current} baseline={baseline} note={notes[current.id]} areaHa={p.area_ha} />
 
+            <button type="button" onClick={() => openCreateProject(current.id)} className="btn-primary w-full">
+              <FolderPlus className="size-5" aria-hidden /> Create Project from Plan {letterOf(current)}
+            </button>
             <button type="button" onClick={() => go("calendar")} className="btn-secondary w-full">
               <CalendarDays className="size-5" aria-hidden /> Calendar for Plan {letterOf(current)}
             </button>
@@ -248,6 +333,112 @@ export default function ResultsPage() {
           </li>
         </ul>
       </details>
+
+      {/* Create Project Modal */}
+      {projectModalOpen && (
+        <div
+          className="fixed inset-0 z-[2000] grid place-items-center bg-black/45 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-project-title"
+        >
+          <form onSubmit={handleCreateProject} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="create-project-title" className="text-[22px] font-bold tracking-tight text-ink">
+                  Create Project from Report
+                </h2>
+                <p className="mt-1 text-[14px] text-ink-3">
+                  Choose a 3-season strategy to turn into an editable project workspace.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProjectModalOpen(false)}
+                disabled={creatingProject}
+                aria-label="Close modal"
+                className="grid size-9 place-items-center rounded-full text-ink-3 hover:bg-black/[0.05]"
+              >
+                <X className="size-5" aria-hidden />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-2.5" role="radiogroup" aria-label="Select strategy">
+              {p.strategies.map((s) => {
+                const l = letterOf(s);
+                const checked = projectPlan === s.id;
+                return (
+                  <label
+                    key={s.id}
+                    className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${
+                      checked ? "border-leaf-600 bg-leaf-50/60" : "border-black/10 hover:bg-black/[0.02]"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="projectPlan"
+                      value={s.id}
+                      checked={checked}
+                      onChange={() => setProjectPlan(s.id)}
+                      className="mt-1 accent-leaf-600"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-ink">
+                          Plan {l} · {PLAN_SHORT[l]}
+                          {s.id === p.recommended_strategy ? " ★" : ""}
+                        </span>
+                        <span className="text-[13px] font-medium text-leaf-700">
+                          ${Math.round(s.totals.net_margin_usd_ha)}/ha · {Math.round(s.totals.water_use_mm)} mm
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[13px] text-ink-3">
+                        {s.seasons.map((sn) => sn.crop_name).join(" → ")}
+                      </p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="mt-4">
+              <label htmlFor="project-name-input" className="block text-[14px] font-semibold text-ink">
+                Project Name
+              </label>
+              <input
+                id="project-name-input"
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="e.g., North Paddy 3-Season Project"
+                maxLength={120}
+                className="mt-1.5 w-full rounded-2xl border border-black/15 px-4 py-2.5 text-[15px] text-ink outline-none focus:border-leaf-600"
+              />
+            </div>
+
+            {projectError && <p className="mt-3 text-[14px] font-medium text-red-600">{projectError}</p>}
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setProjectModalOpen(false)} disabled={creatingProject} className="btn-secondary !min-h-11 !px-4 text-[15px]">
+                Cancel
+              </button>
+              <button type="submit" disabled={creatingProject} className="btn-primary !min-h-11 !px-5 text-[15px]">
+                {creatingProject ? "Creating…" : "Create & Open Project"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <CascadeWarningModal
+        open={deleteModalOpen}
+        title="Delete this report?"
+        description="Deleting this report is permanent and will also cascade-delete all active 3-season projects created from this report."
+        confirmLabel="Delete Report & Linked Projects"
+        busy={deletingReport}
+        onCancel={() => setDeleteModalOpen(false)}
+        onConfirm={handleDeleteReport}
+      />
     </div>
   );
 }

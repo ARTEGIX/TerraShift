@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRight, Calendar, MapPin, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowRight, Calendar, MapPin, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { Notice } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
 import { ApiError, analyseFarm, deleteFarm, fetchCrops, listAnalyses, listFarms } from "@/lib/api";
@@ -20,6 +21,8 @@ export default function FarmsPage() {
   const [crops, setCrops] = useState<CropInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Farm | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchCrops().then(setCrops).catch(() => setCrops([]));
@@ -48,13 +51,18 @@ export default function FarmsPage() {
     }
   }
 
-  async function remove(farm: Farm) {
-    if (!confirm(`Delete "${farm.name}"? Its saved plans stay in your history.`)) return;
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await deleteFarm(farm._id);
-      setFarms((f) => f?.filter((x) => x._id !== farm._id) ?? null);
+      await deleteFarm(deleteTarget._id);
+      setFarms((f) => f?.filter((x) => x._id !== deleteTarget._id) ?? null);
+      setAnalyses((prev) => prev.filter((a) => a.farm_id !== deleteTarget._id));
+      setDeleteTarget(null);
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -93,23 +101,39 @@ export default function FarmsPage() {
       <ul className="mt-6 space-y-4">
         {farms?.map((farm) => {
           const past = analyses.filter((a) => a.farm_id === farm._id);
+          const reportsCount = farm.reports_count ?? past.length;
+          const projectsCount = farm.projects_count ?? 0;
           return (
             <li key={farm._id} className="card">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-[20px] font-semibold tracking-tight text-ink">{farm.name}</h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/farms/${farm._id}`} className="text-[20px] font-semibold tracking-tight text-ink hover:text-leaf-700">
+                      {farm.name}
+                    </Link>
+                    <span className="rounded-full bg-black/[0.05] px-2.5 py-0.5 text-[12px] font-medium text-ink-2">
+                      {reportsCount} {reportsCount === 1 ? "report" : "reports"}
+                    </span>
+                    <span className="rounded-full bg-leaf-50 px-2.5 py-0.5 text-[12px] font-medium text-leaf-700">
+                      {projectsCount} {projectsCount === 1 ? "project" : "projects"}
+                    </span>
+                  </div>
                   <p className="mt-1 text-[15px] text-ink-3">
                     {farm.area_ha} ha ({haToAcres(farm.area_ha).toFixed(1)} acres) · {cropName(farm.current_crop)} ·{" "}
                     {soilLabel(farm.soil_type)} · Goal: {priorityLabel(farm.default_priority)}
+                    {farm.planting_month ? ` · ${farm.planting_month === 4 ? "Yala (Apr)" : "Maha (Oct)"}` : ""}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/farms/${farm._id}`} className="btn-secondary !min-h-11 !px-3.5 text-sm">
+                    <Pencil className="size-4" aria-hidden /> Open / Edit
+                  </Link>
                   <button type="button" onClick={() => rerun(farm)} disabled={!!busy} className="btn-primary !min-h-11 !px-4 text-sm">
                     <RefreshCw className="size-4" aria-hidden /> Get new plans
                   </button>
                   <button
                     type="button"
-                    onClick={() => remove(farm)}
+                    onClick={() => setDeleteTarget(farm)}
                     aria-label={`Delete ${farm.name}`}
                     className="grid size-11 place-items-center rounded-2xl bg-black/[0.05] text-ink-3 hover:bg-red-50 hover:text-red-600"
                   >
@@ -135,6 +159,18 @@ export default function FarmsPage() {
           );
         })}
       </ul>
+
+      <CascadeWarningModal
+        open={!!deleteTarget}
+        title={`Delete "${deleteTarget?.name ?? "field"}"?`}
+        description={`Deleting this field will permanently remove the field along with ${
+          deleteTarget ? (deleteTarget.reports_count ?? analyses.filter((a) => a.farm_id === deleteTarget._id).length) : 0
+        } linked report(s) and ${deleteTarget?.projects_count ?? 0} linked project(s).`}
+        confirmLabel="Delete Field & Linked Data"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

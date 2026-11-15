@@ -24,6 +24,7 @@ export default function Navbar() {
   const links = [
     { href: "/farm", label: "New plan" },
     { href: "/farms", label: "My fields" },
+    { href: "/projects", label: "My projects" },
   ];
   const linkCls = (href: string) =>
     `rounded-full px-3.5 py-2 hover:bg-black/[0.05] ${pathname?.startsWith(href) ? "font-semibold text-ink" : ""}`;

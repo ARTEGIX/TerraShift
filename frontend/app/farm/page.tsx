@@ -87,6 +87,7 @@ export default function FarmWizardPage() {
         soil_type: draft.soilType!,
         current_crop: draft.currentCrop!,
         default_priority: draft.priority!,
+        planting_month: draft.plantingMonth,
       });
       const analysis = await analyseFarm(farm._id, draft.priority!, draft.plantingMonth);
       clearDraft();
