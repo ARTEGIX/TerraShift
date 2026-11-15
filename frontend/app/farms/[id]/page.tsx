@@ -380,6 +380,7 @@ export default function FarmDetailPage() {
 
       <CascadeWarningModal
         open={modalMode === "save_field"}
+        title="Save changes and cascade delete?"
         description={`Changing any field value or the geofence will permanently cascade-delete ${reportsCount} linked report(s) and ${projectsCount} linked project(s).`}
         confirmLabel="Save Changes & Cascade Delete"
         busy={busyAction}
