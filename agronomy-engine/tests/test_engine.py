@@ -10,7 +10,14 @@ from app.main import app
 from app.memory_store import lookup_store
 from app.appeears_client import aggregate_appeears_csvs, build_point_task_payload
 from app.forecast_client import parse_seasonal_forecast
-from app.nasa_fusion import build_cube_from_power, build_fallback_cube, grid_cache_key
+from app.nasa_fusion import (
+    COL_SMAP_MOISTURE,
+    SOIL_PARAMETERS,
+    _fetch_power_raw,
+    build_cube_from_power,
+    build_fallback_cube,
+    grid_cache_key,
+)
 from app.soil_client import classify_soil_type, parse_soilgrids_response
 from app.terrain_client import compute_slope_and_ls
 
@@ -115,6 +122,66 @@ def test_build_cube_from_power_with_optional_t2m_min_and_rh2m():
     assert np.isclose(cube.matrix[0, 2], 5.0)
     assert records[0]["t2m_min_c"] == 23.5
     assert records[0]["rh2m_pct"] == 78.0
+
+
+def test_build_cube_from_power_uses_gwetroot_and_fetch_requests_soil_parameters(monkeypatch):
+    import asyncio
+
+    from app import nasa_fusion
+
+    captured_params: dict[str, object] = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"properties": {"parameter": {}}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, _url, params=None):
+            captured_params.update(params or {})
+            return FakeResp()
+
+    monkeypatch.setattr(nasa_fusion.httpx, "AsyncClient", FakeClient)
+    asyncio.run(_fetch_power_raw(8.31, 80.40, 2023, 2025))
+    requested = str(captured_params.get("parameters", "")).split(",")
+    for param in SOIL_PARAMETERS:
+        assert param in requested
+
+    ym_keys = [f"{y:04d}{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    raw = {
+        "properties": {
+            "parameter": {
+                "T2M_MAX": {k: 32.0 for k in ym_keys},
+                "PRECTOTCORR": {k: 3.5 for k in ym_keys},
+                "ALLSKY_SFC_SW_DWN": {k: 18.0 for k in ym_keys},
+                "EVPTRNS": {k: 9.8 for k in ym_keys},
+                "GWETROOT": {k: (0.63 if i != 4 else -999.0) for i, k in enumerate(ym_keys)},
+                "GWETTOP": {k: 0.42 for k in ym_keys},
+            }
+        },
+        "parameters": {
+            "ALLSKY_SFC_SW_DWN": {"units": "MJ/m^2/day"},
+            "EVPTRNS": {"units": "MJ/m^2/day"},
+        },
+    }
+    cube = build_cube_from_power(raw, 8.31, 80.40, "nasa:grid:8.31:80.40")
+    assert np.allclose(cube.matrix[:, COL_SMAP_MOISTURE], 63.0)
+    assert cube.extra_series is not None
+    assert np.allclose(cube.extra_series["gwetroot_pct"], 63.0)
+    assert np.allclose(cube.extra_series["gwettop_pct"], 42.0)
 
 
 def test_soilgrids_parser_and_classifier():

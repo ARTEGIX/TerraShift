@@ -159,7 +159,7 @@ def _harmonize_smap_and_ndvi(
 async def _fetch_power_raw(lat: float, lon: float, start_year: int, end_year: int) -> dict[str, Any]:
     settings = get_settings()
     params = {
-        "parameters": ",".join(PARAMETERS + EXTRA_PARAMETERS),
+        "parameters": ",".join(PARAMETERS + SOIL_PARAMETERS + EXTRA_PARAMETERS),
         "community": "AG",
         "latitude": lat,
         "longitude": lon,
