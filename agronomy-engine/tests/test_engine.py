@@ -270,6 +270,32 @@ def test_layer1_and_layer2_consume_soilgrids_and_vpd():
     assert len(strategies) == 3
 
 
+def test_layer1_uses_regressed_smap_reserve_and_planting_month_anomaly():
+    cube_high = build_fallback_cube(7.87, 80.77)
+    cube_high.matrix[:, COL_SMAP_MOISTURE] = 85.0
+
+    cube_low = build_fallback_cube(7.87, 80.77)
+    cube_low.matrix[:, COL_SMAP_MOISTURE] = 25.0
+
+    l1_high = run_layer1_regression(cube=cube_high, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    l1_low = run_layer1_regression(cube=cube_low, soil_type="soil_clay_loam", current_crop="paddy_rice")
+    assert np.all(l1_high.season_water_budgets_mm > l1_low.season_water_budgets_mm)
+
+    cube_pm = build_fallback_cube(7.87, 80.77)
+    cube_pm.matrix[:, COL_SMAP_MOISTURE] = 50.0
+    cube_pm.matrix[cube_pm.month_numbers == 4, COL_SMAP_MOISTURE] = np.array([60.0, 45.0, 30.0])
+    cube_pm.matrix[cube_pm.month_numbers == 10, COL_SMAP_MOISTURE] = np.array([40.0, 55.0, 70.0])
+
+    l1_apr = run_layer1_regression(
+        cube=cube_pm, soil_type="soil_clay_loam", current_crop="paddy_rice", planting_month=4
+    )
+    l1_oct = run_layer1_regression(
+        cube=cube_pm, soil_type="soil_clay_loam", current_crop="paddy_rice", planting_month=10
+    )
+    assert l1_apr.october_moisture_anomaly_pct < 0.0
+    assert l1_oct.october_moisture_anomaly_pct > 0.0
+
+
 def test_terrain_seasonal_forecast_and_hls_ecostress():
     terrain = compute_slope_and_ls(
         [(7.87, 80.77), (7.875, 80.775), (7.865, 80.765)],

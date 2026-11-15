@@ -209,10 +209,12 @@ def run_layer1_regression(
     ridge_precip = Ridge(alpha=1.0).fit(X_train, precip)
     ridge_et = Ridge(alpha=1.0).fit(X_train, et)
     ridge_t2m = Ridge(alpha=1.0).fit(X_train, t2m)
+    ridge_smap = Ridge(alpha=1.0).fit(X_train, smap)
 
     pred_precip = np.clip(ridge_precip.predict(X_future), 5.0, None)
     pred_et = np.clip(ridge_et.predict(X_future), 20.0, None)
     pred_t2m = ridge_t2m.predict(X_future)
+    pred_smap = np.clip(ridge_smap.predict(X_future), 10.0, 100.0)
 
     pred_wb = ridge_precip.predict(X_train) - 0.65 * ridge_et.predict(X_train)
     ss_tot = float(np.sum((water_balance - water_balance.mean()) ** 2)) or 1.0
@@ -236,7 +238,8 @@ def run_layer1_regression(
         if s == 0 and fc_precip_mm is not None:
             ridge_rain = 0.65 * ridge_rain + 0.35 * float(fc_precip_mm)
         eff_rain = ridge_rain * retention
-        soil_reserve = float(soil["water_holding_mm_m"]) * 0.65
+        start_moisture_frac = float(pred_smap[s * 6]) / 100.0
+        soil_reserve = float(soil["water_holding_mm_m"]) * start_moisture_frac
         evap_loss = float(np.sum(pred_et[sl]) * 0.22 * vpd_evap_mult)
         season_budgets[s] = max(
             140.0,
@@ -246,17 +249,18 @@ def run_layer1_regression(
         label_name = "Maha" if first_m in (9, 10, 11, 12, 1, 2) else "Yala"
         season_labels.append(f"Season {s + 1} ({label_name})")
 
-    # 2. October root-zone soil moisture anomaly (%) via np.polyfit over historical Octobers + SMAP series
-    oct_mask = months == 10
-    oct_values = smap[oct_mask] if np.any(oct_mask) else smap[-3:]
-    oct_x = np.arange(oct_values.size, dtype=np.float64)
-    if oct_values.size >= 2:
-        oct_slope, oct_intercept = np.polyfit(oct_x, oct_values, 1)
-        projected_oct = float(oct_slope * oct_values.size + oct_intercept)
+    # 2. Planting-month root-zone soil moisture anomaly (%) via np.polyfit over historical planting months + SMAP series
+    target_month = int(np.clip(planting_month, 1, 12))
+    pm_mask = months == target_month
+    pm_values = smap[pm_mask] if np.any(pm_mask) else smap[-3:]
+    pm_x = np.arange(pm_values.size, dtype=np.float64)
+    if pm_values.size >= 2:
+        pm_slope, pm_intercept = np.polyfit(pm_x, pm_values, 1)
+        projected_pm = float(pm_slope * pm_values.size + pm_intercept)
     else:
-        projected_oct = float(oct_values[-1])
-    baseline_oct = float(np.mean(smap))
-    oct_anomaly_pct = float(((projected_oct - baseline_oct) / max(10.0, baseline_oct)) * 100.0)
+        projected_pm = float(pm_values[-1])
+    baseline_pm = float(np.mean(smap))
+    oct_anomaly_pct = float(((projected_pm - baseline_pm) / max(10.0, baseline_pm)) * 100.0)
 
     # 3. Bare-field erosion risk (precip during bare_field_months × soil erosion_k_factor × low NDVI exposure)
     bare_months = [int(m) for m in region.get("bare_field_months", [3, 4, 8, 9])]
