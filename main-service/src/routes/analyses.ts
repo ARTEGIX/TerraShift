@@ -185,6 +185,12 @@ router.post(
     const existing = await findRunById(id);
     if (!existing) throw HttpError.notFound(`Simulation run '${id}' not found`);
 
+    const { lat, lon } = existing.prediction.location;
+    const sat = await getSatelliteStatus(lat, lon);
+    if (sat.status !== "ready") {
+      throw HttpError.conflict(`Satellite data is not ready yet (status: ${sat.status})`);
+    }
+
     const prediction = await predict(existing.request);
     const explanation = await explainSimulation(prediction);
     const now = new Date();
