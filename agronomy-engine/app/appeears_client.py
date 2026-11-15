@@ -142,6 +142,8 @@ def _aggregate_csv_column(
             continue
         try:
             val = float(raw_val)
+            if column_substring in {MODIS_LAYER, HLS_LAYER}:
+                val *= 0.0001
         except ValueError:
             continue
         if valid_min <= val <= valid_max:
