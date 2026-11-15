@@ -5,6 +5,7 @@ import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 
 import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { BASE_LAYERS, LABELS_LAYER_URL, NASA_LAYERS, gibsTileUrl, type BaseLayerKey } from "@/lib/layers";
@@ -147,10 +148,39 @@ function ZoomControl() {
   return null;
 }
 
+function MapResizeWatcher() {
+  const map = useMap();
+  useEffect(() => {
+    map.invalidateSize();
+    const t1 = setTimeout(() => map.invalidateSize(), 150);
+    const t2 = setTimeout(() => map.invalidateSize(), 500);
+
+    const container = map.getContainer();
+    if (!container) return () => { clearTimeout(t1); clearTimeout(t2); };
+
+    const ro = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    ro.observe(container);
+
+    const onResize = () => map.invalidateSize();
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      ro.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, [map]);
+  return null;
+}
+
 export default function FarmMap(props: FarmMapProps) {
   const [view, setView] = useState<MapView>({ base: "satellite", overlay: null, opacity: 0.7, date: null, showLabels: true });
   const [zoom, setZoom] = useState(7);
   const [flyTarget, setFlyTarget] = useState<{ bbox: BBox; at: number } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const onZoom = useCallback((z: number) => setZoom(z), []);
 
   const base = BASE_LAYERS[view.base as BaseLayerKey];
@@ -158,9 +188,22 @@ export default function FarmMap(props: FarmMapProps) {
   const overlayUrl = overlay ? gibsTileUrl(overlay, view.date) : null;
   const coarseNotice = overlay?.coarse && zoom > overlay.maxNativeZoom + 3;
 
+  // On mobile, auto-expand to fullscreen when the user triggers "Start drawing"
+  useEffect(() => {
+    if (props.drawSignal && typeof window !== "undefined" && window.innerWidth < 1024) {
+      setIsExpanded(true);
+    }
+  }, [props.drawSignal]);
+
   return (
-    <div className="ts-map relative h-full w-full overflow-hidden [container-type:size]">
-      <MapContainer center={DEFAULT_CENTER} zoom={7} minZoom={2} maxZoom={19} zoomControl={false} worldCopyJump className="h-full w-full">
+    <div
+      className={`ts-map relative w-full overflow-hidden [container-type:size] transition-all duration-300 ${
+        isExpanded
+          ? "fixed inset-0 z-[1050] h-[100dvh] w-screen"
+          : "h-full min-h-[inherit]"
+      }`}
+    >
+      <MapContainer center={DEFAULT_CENTER} zoom={7} minZoom={2} maxZoom={19} zoomControl={false} worldCopyJump className="h-full w-full min-h-[inherit]">
         <TileLayer key={view.base} url={base.url} attribution={base.attribution} maxNativeZoom={base.maxNativeZoom} maxZoom={19} />
         {overlay && overlayUrl && (
           <TileLayer
@@ -179,13 +222,48 @@ export default function FarmMap(props: FarmMapProps) {
         <FlyTo target={flyTarget} />
         <ZoomWatcher onZoom={onZoom} />
         <ZoomControl />
+        <MapResizeWatcher />
       </MapContainer>
 
       {!props.readOnly && <PlaceSearch onPlace={(bbox) => setFlyTarget({ bbox, at: Date.now() })} />}
-      <LayerPanel view={view} onChange={(patch) => setView((v) => ({ ...v, ...patch }))} compact={props.readOnly} />
+      <LayerPanel
+        view={view}
+        onChange={(patch) => setView((v) => ({ ...v, ...patch }))}
+        compact={props.readOnly}
+        drawSignal={props.drawSignal}
+      />
+
+      {/* Expand map button when in embedded mode */}
+      {!props.readOnly && !isExpanded && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded(true)}
+          aria-label="Expand map for free drawing"
+          title="Expand map for free drawing"
+          className="absolute bottom-4 left-3 z-[1001] flex items-center gap-1.5 rounded-xl bg-white/95 px-3 py-2 text-xs font-semibold text-slate-800 shadow-md ring-1 ring-black/10 backdrop-blur hover:bg-slate-50 transition active:scale-95"
+        >
+          <Maximize2 className="size-4 text-leaf-700" />
+          <span>Full map</span>
+        </button>
+      )}
+
+      {/* Floating guidance bar when in expanded drawing mode */}
+      {isExpanded && !props.readOnly && (
+        <div className="animate-fade-up absolute bottom-4 left-1/2 -translate-x-1/2 z-[1002] flex max-w-[calc(100vw-2rem)] items-center gap-2 sm:gap-3 rounded-full bg-white/95 px-3.5 py-1.5 sm:px-4 sm:py-2 text-xs font-medium text-slate-800 shadow-lg ring-1 ring-black/5 backdrop-blur">
+          <span className="truncate">{props.polygon ? "Field outline saved!" : "Tap corners on map to trace field"}</span>
+          <button
+            type="button"
+            onClick={() => setIsExpanded(false)}
+            className="shrink-0 flex items-center gap-1 rounded-full bg-leaf-700 px-3 py-1 font-semibold text-white shadow hover:bg-leaf-800 transition"
+          >
+            <Minimize2 className="size-3.5" />
+            <span>Done</span>
+          </button>
+        </div>
+      )}
 
       {coarseNotice && overlay && (
-        <div className="pointer-events-none absolute bottom-10 left-1/2 z-[1000] w-[min(92%,26rem)] -translate-x-1/2 rounded-lg bg-black/75 px-3 py-2 text-center text-xs text-white">
+        <div className="pointer-events-none absolute bottom-12 left-1/2 z-[1000] w-[min(92%,26rem)] -translate-x-1/2 rounded-lg bg-black/75 px-3 py-2 text-center text-xs text-white">
           Each &ldquo;{overlay.label.toLowerCase()}&rdquo; square is about {overlay.resolution} wide, bigger than most
           fields. Read it as your area, not your exact field.
         </div>

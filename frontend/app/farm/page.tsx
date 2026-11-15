@@ -180,7 +180,14 @@ export default function FarmWizardPage() {
                 <li>2. Zoom in until you can see your field.</li>
                 <li>3. Tap each corner of the field, then tap the first corner again.</li>
               </ol>
-              <button type="button" onClick={() => setDrawSignal((n) => n + 1)} className="btn-primary w-full">
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawSignal((n) => n + 1);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="btn-primary w-full"
+              >
                 <Pencil className="size-5" aria-hidden /> {draft.polygon ? "Draw it again" : "Start drawing"}
               </button>
               {field?.ok && field.centroid && (
@@ -203,7 +210,7 @@ export default function FarmWizardPage() {
           </div>
           <div className="sticky bottom-0 border-t border-black/[0.08] bg-canvas/85 px-5 py-3 backdrop-blur-xl">{footer}</div>
         </aside>
-        <div className="h-[58vh] min-h-[22rem] flex-1 lg:h-auto">
+        <div className="relative h-[56vh] min-h-[24rem] w-full shrink-0 lg:h-auto lg:min-h-0 lg:flex-1">
           <FarmMapLazy polygon={draft.polygon} onPolygonChange={(p) => update({ polygon: p })} drawSignal={drawSignal} />
         </div>
       </div>

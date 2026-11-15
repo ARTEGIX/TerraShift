@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Layers } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ChevronUp, Layers, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { BASE_LAYERS, NASA_LAYERS, type BaseLayerKey, type NasaLayer } from "@/lib/layers";
 
 export interface MapView {
@@ -21,16 +21,16 @@ function shift(date: string | null, days: number) {
 }
 
 const chip =
-  "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors";
+  "inline-flex items-center rounded-full border px-2 sm:px-3 py-0.5 sm:py-1 text-[11px] sm:text-xs font-medium transition-colors";
 const chipOn = "border-leaf-700 bg-leaf-700 text-white";
 const chipOff = "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
 
 function DateControls({ layer, view, onChange }: { layer: NasaLayer; view: MapView; onChange: (p: Partial<MapView>) => void }) {
-  if (layer.period === "static") return <p className="text-xs text-slate-500">This layer doesn&apos;t change over time.</p>;
+  if (layer.period === "static") return <p className="text-[11px] sm:text-xs text-slate-500">This layer doesn&apos;t change over time.</p>;
   const step = layer.period === "monthly" ? 30 : layer.period === "16day" ? 16 : 1;
   return (
-    <div className="space-y-2">
-      <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+    <div className="space-y-1.5 sm:space-y-2">
+      <label className="flex items-center gap-2 text-[11px] sm:text-xs font-medium text-slate-600">
         Date
         <input
           type="date"
@@ -38,7 +38,7 @@ function DateControls({ layer, view, onChange }: { layer: NasaLayer; view: MapVi
           max={today()}
           value={view.date ?? ""}
           onChange={(e) => onChange({ date: e.target.value || null })}
-          className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+          className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 sm:px-2 sm:py-1 text-[11px] sm:text-xs"
         />
       </label>
       <div className="flex flex-wrap gap-1">
@@ -52,7 +52,7 @@ function DateControls({ layer, view, onChange }: { layer: NasaLayer; view: MapVi
           1 year ago
         </button>
       </div>
-      <p className="text-[11px] leading-snug text-slate-500">
+      <p className="text-[10px] sm:text-[11px] leading-snug text-slate-500">
         {view.date === null ? "Showing the newest image." : "Map empty? There may be no image for that day. Try another date."}
         {layer.key === "water_storage" && " Groundwater images on this service stop in mid-2022."}
       </p>
@@ -64,30 +64,43 @@ export default function LayerPanel({
   view,
   onChange,
   compact,
+  drawSignal,
 }: {
   view: MapView;
   onChange: (patch: Partial<MapView>) => void;
   compact?: boolean;
+  drawSignal?: number;
 }) {
   const [open, setOpen] = useState(() => !compact && typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches);
   const active = NASA_LAYERS.find((l) => l.key === view.overlay) ?? null;
 
+  // Auto-close when drawing begins so user can draw freely
+  useEffect(() => {
+    if (drawSignal) setOpen(false);
+  }, [drawSignal]);
+
   return (
-    <div className="absolute right-3 top-3 z-[1000] w-[min(19rem,calc(100cqw-4.5rem))] text-slate-800">
+    <div
+      className={`absolute right-3 top-14 sm:top-3 z-[1000] text-slate-800 transition-all ${
+        open
+          ? "w-[min(15.5rem,calc(100vw-2.5rem))] sm:w-[min(19rem,calc(100cqw-4.5rem))]"
+          : "w-auto max-w-[calc(100%-4.5rem)] sm:w-[min(19rem,calc(100cqw-4.5rem))]"
+      }`}
+    >
       <div className="rounded-xl bg-white/95 shadow-lg ring-1 ring-black/5 backdrop-blur">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-semibold"
+          className="flex w-full items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2.5 text-xs sm:text-sm font-semibold"
         >
-          <Layers className="size-4 text-leaf-700" aria-hidden />
+          <Layers className="size-4 text-leaf-700 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate text-left">NASA satellite layers{active ? ` · ${active.label}` : ""}</span>
-          {open ? <ChevronUp className="size-4" aria-hidden /> : <ChevronDown className="size-4" aria-hidden />}
+          {open ? <ChevronUp className="size-4 shrink-0" aria-hidden /> : <ChevronDown className="size-4 shrink-0" aria-hidden />}
         </button>
 
         {open && (
-          <div className="max-h-[calc(100cqh-5rem)] space-y-3 overflow-y-auto border-t border-slate-200 px-3 pb-3 pt-2">
+          <div className="max-h-[min(19rem,calc(100cqh-5.5rem))] sm:max-h-[calc(100cqh-5rem)] space-y-2 sm:space-y-3 overflow-y-auto border-t border-slate-200 px-2.5 pb-2.5 pt-2 sm:px-3 sm:pb-3">
             <div className="flex gap-1">
               {(Object.keys(BASE_LAYERS) as BaseLayerKey[]).map((k) => (
                 <button
@@ -113,20 +126,20 @@ export default function LayerPanel({
             </div>
 
             <fieldset className="space-y-0.5">
-              <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Show on map</legend>
+              <legend className="mb-0.5 sm:mb-1 text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-slate-500">Show on map</legend>
               {[{ key: null, label: "Nothing extra", mission: "", resolution: "" } as const, ...NASA_LAYERS].map((l) => (
-                <label key={l.key ?? "none"} className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 hover:bg-slate-100">
+                <label key={l.key ?? "none"} className="flex cursor-pointer items-start gap-1.5 sm:gap-2 rounded px-1.5 py-0.5 sm:py-1 hover:bg-slate-100">
                   <input
                     type="radio"
                     name="overlay"
                     checked={view.overlay === l.key}
                     onChange={() => onChange({ overlay: l.key })}
-                    className="mt-1 accent-leaf-700"
+                    className="mt-0.5 size-3.5 sm:size-4 accent-leaf-700 shrink-0"
                   />
                   <span className="min-w-0">
-                    <span className="block text-sm leading-tight">{l.label}</span>
+                    <span className="block text-xs sm:text-sm font-medium leading-snug">{l.label}</span>
                     {l.mission && (
-                      <span className="block text-[11px] text-slate-500">
+                      <span className="block text-[10px] sm:text-[11px] leading-tight text-slate-500">
                         {l.mission} · {l.resolution}
                       </span>
                     )}
@@ -136,13 +149,13 @@ export default function LayerPanel({
             </fieldset>
 
             {active && (
-              <div className="space-y-3 rounded-lg bg-slate-50 p-2 ring-1 ring-slate-200">
-                <p className="text-xs leading-snug text-slate-700">{active.description}</p>
+              <div className="space-y-2 sm:space-y-3 rounded-lg bg-slate-50 p-2 ring-1 ring-slate-200">
+                <p className="text-[11px] sm:text-xs leading-snug text-slate-700">{active.description}</p>
                 {active.legend && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={active.legend} alt={`${active.label} colour scale`} className="w-full" />
+                  <img src={active.legend} alt={`${active.label} colour scale`} className="w-full max-h-10 object-contain sm:max-h-none" />
                 )}
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <label className="flex items-center gap-2 text-[11px] sm:text-xs font-medium text-slate-600">
                   See-through
                   <input
                     type="range"
@@ -153,11 +166,21 @@ export default function LayerPanel({
                     onChange={(e) => onChange({ opacity: Number(e.target.value) })}
                     className="flex-1 accent-leaf-700"
                   />
-                  <span className="w-8 text-right tabular-nums">{Math.round(view.opacity * 100)}%</span>
+                  <span className="w-7 sm:w-8 text-right tabular-nums text-[11px] sm:text-xs">{Math.round(view.opacity * 100)}%</span>
                 </label>
                 <DateControls layer={active} view={view} onChange={onChange} />
               </div>
             )}
+
+            <div className="pt-1 border-t border-slate-200 sm:hidden">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full rounded-lg bg-slate-100 py-1 text-center text-xs font-semibold text-slate-700 hover:bg-slate-200 transition"
+              >
+                Done
+              </button>
+            </div>
           </div>
         )}
       </div>
