@@ -335,8 +335,7 @@ def test_project_recalculate_endpoint():
 
 def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-    from app import appeears_client, cache
+    from app import appeears_client, appeears_store, cache
 
     fake_redis: dict[str, object] = {}
 
@@ -349,9 +348,17 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
     async def fake_del(k: str):
         fake_redis.pop(k, None)
 
+    async def fake_l2_get(*_a, **_k):
+        return None
+
+    async def fake_l2_save(*_a, **_k):
+        return True
+
     monkeypatch.setattr(cache, "get_json", fake_get)
     monkeypatch.setattr(cache, "set_json", fake_set)
     monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
     monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
     monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
 
@@ -600,3 +607,50 @@ def test_appeears_sync_completed_tasks(monkeypatch):
     assert bundle_downloads == 1
     assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
     assert "appeears:grid:7.25:79.86" in fake_redis
+
+
+def test_appeears_import_csv_dir_groups_task_name_and_hyphen_prefixes(monkeypatch, tmp_path):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+
+    m_22_24 = [f"{y:04d}-{m:02d}" for y in (2022, 2023, 2024) for m in range(1, 13)]
+    m_23_25 = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+
+    (tmp_path / "terrashift_8.31_80.40_2022_2024-MOD13Q1-061-results.csv").write_text(
+        "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+        + "\n".join(f"id,8.31,80.40,{m}-01,0.51" for m in m_22_24)
+    )
+    (tmp_path / "terrashift-7-25-79-86-2023-2025-MOD13Q1-061-results.csv").write_text(
+        "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n"
+        + "\n".join(f"id,7.25,79.86,{m}-01,0.68" for m in m_23_25)
+    )
+
+    imported = asyncio.run(appeears_client.import_appeears_csv_dir(str(tmp_path)))
+    assert len(imported) == 2
+    by_grid = {item["grid_key"]: item for item in imported}
+    assert by_grid["appeears:grid:8.31:80.40"]["start_year"] == 2022
+    assert by_grid["appeears:grid:8.31:80.40"]["end_year"] == 2024
+    assert by_grid["appeears:grid:7.25:79.86"]["start_year"] == 2023
+    assert by_grid["appeears:grid:7.25:79.86"]["end_year"] == 2025
+    assert ("appeears:grid:8.31:80.40", 2022, 2024) in fake_l2
+    assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
+    assert fake_l2[("appeears:grid:8.31:80.40", 2022, 2024)]["ndvi"][0] == 0.51
+    assert fake_l2[("appeears:grid:7.25:79.86", 2023, 2025)]["ndvi"][0] == 0.68

@@ -95,7 +95,7 @@ def _window_years(months: list[str] | None = None) -> tuple[int, int]:
 
 
 def _is_valid_appeears_payload(payload: Any, expected_months: list[str] | None = None) -> bool:
-if not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return False
     target = expected_months if expected_months is not None else target_36_months()
     series = [payload.get("smap_moisture_pct"), payload.get("ndvi")]
@@ -482,7 +482,15 @@ def trigger_background_prefetch(lat: float, lon: float) -> bool:
 
 
 _TASK_NAME_RE = re.compile(r"^terrashift_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)_(\d{4})_(\d{4})$")
-_CSV_PREFIX_RE = re.compile(r"^(terrashift-(-?\d+)-(\d+)-(-?\d+)-(\d+)-(\d{4})-(\d{4}))-")
+_CSV_PREFIX_RE = re.compile(r"^terrashift[-_](-?\d+(?:[.-]\d+)?)[-_](-?\d+(?:[.-]\d+)?)[-_](\d{4})[-_](\d{4})[-_]")
+
+
+def _parse_coord_token(token: str) -> float:
+    sign = "-" if token.startswith("-") else ""
+    body = token.lstrip("-")
+    if "." not in body:
+        body = body.replace("-", ".", 1)
+    return round(float(f"{sign}{body}"), 2)
 
 
 def _extract_task_grid(task: dict[str, Any]) -> tuple[float, float, int, int] | None:
@@ -604,15 +612,18 @@ async def import_appeears_csv_dir(
         if not slot:
             continue
         m = _CSV_PREFIX_RE.match(path.name)
-        if m and lat is None and lon is None:
-            group_key = m.group(1)
-            g_lat = round(float(f"{m.group(2)}.{m.group(3)}"), 2)
-            g_lon = round(float(f"{m.group(4)}.{m.group(5)}"), 2)
-            start_year, end_year = int(m.group(6)), int(m.group(7))
+        if m:
+            parsed_lat = _parse_coord_token(m.group(1))
+            parsed_lon = _parse_coord_token(m.group(2))
+            start_year, end_year = int(m.group(3)), int(m.group(4))
+            g_lat = round(lat, 2) if lat is not None else parsed_lat
+            g_lon = round(lon, 2) if lon is not None else parsed_lon
+            group_key = f"{g_lat:.2f}:{g_lon:.2f}:{start_year}:{end_year}"
         else:
-            group_key = "custom"
-            g_lat, g_lon = lat, lon
+            g_lat = round(lat, 2) if lat is not None else None
+            g_lon = round(lon, 2) if lon is not None else None
             start_year, end_year = _window_years()
+            group_key = f"custom:{start_year}:{end_year}"
 
         entry = groups.setdefault(group_key, {"lat": g_lat, "lon": g_lon, "start_year": start_year, "end_year": end_year, "slots": {}})
         entry["slots"][slot] = path.read_text(encoding="utf-8", errors="replace")
