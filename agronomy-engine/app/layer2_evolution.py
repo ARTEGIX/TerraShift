@@ -23,6 +23,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import random
+
+from deap import base, creator, tools
 import numpy as np
 
 from app.config import get_settings
@@ -146,6 +149,7 @@ def evaluate_population_vectorized(
     return f_soil, f_water, f_cost
 
 
+
 def _evolve_strategy(
     weights: tuple[float, float, float],
     layer1: Layer1RegressionOutput,
@@ -156,59 +160,57 @@ def _evolve_strategy(
     n_gen: int = 30,
     store: InMemoryLookupStore = lookup_store,
 ) -> tuple[tuple[int, int, int], float]:
-    """Run vectorized GA (`pop_size=50`, `n_gen=30`) in pure NumPy and return best chromosome."""
+    """Run a PyGAD-based genetic algorithm and return the best crop sequence."""
+
     rng = np.random.default_rng(seed)
+
     n_crops = len(store.crop_ids)
     w_soil, w_water, w_cost = weights
     cat = store.category_ids
 
-    pop = rng.integers(0, n_crops, size=(pop_size, N_SEASONS), dtype=np.int32)
+    # 1. Generate the initial population
+    initial_population = rng.integers(0,n_crops,size=(pop_size, N_SEASONS),dtype=np.int32,)
 
-    for _ in range(n_gen):
-        f_soil, f_water, f_cost = evaluate_population_vectorized(pop, layer1, store)
-        fitness = w_soil * f_soil + w_water * f_water + w_cost * f_cost
-
+    # 2. Define the batch fitness function
+    def fitness_func(ga_instance, solutions, solutions_indices):
+        solutions = np.asarray(solutions, dtype=np.int32)
+        # Ensure solutions have shape (population_size, 3)
+        if solutions.ndim == 1:
+            solutions = solutions.reshape(1, -1)
+        # Reuse the existing vectorized agricultural evaluator
+        f_soil, f_water, f_cost = evaluate_population_vectorized(solutions,layer1,store,)
+        # Combine the three objectives
+        fitness = (w_soil * f_soil+ w_water * f_water+ w_cost * f_cost)
+        # Preserve the existing legume/cover-crop penalty
         if require_legume_or_cover:
-            has_fixer = np.any((cat[pop] == 1) | (cat[pop] == 2), axis=1)
-            fitness = np.where(has_fixer, fitness, fitness - 0.45)
+            has_fixer = np.any((cat[solutions] == 1) | (cat[solutions] == 2),axis=1,)
+            fitness = np.where(has_fixer,fitness,fitness - 0.45,)
+        return fitness.astype(float)
 
-        # Elitism: keep top 4 chromosomes
-        elite_idx = np.argsort(-fitness)[:4]
-        elites = pop[elite_idx].copy()
+    # 3. Configure PyGAD
+    ga_instance = pygad.GA(num_generations=n_gen,num_parents_mating=pop_size - 4,fitness_func=fitness_func,
+        sol_per_pop=pop_size,num_genes=N_SEASONS,initial_population=initial_population,gene_space=list(range(n_crops)),
+        gene_type=int,parent_selection_type="tournament",K_tournament=3,crossover_type="single_point",mutation_type="random",
+        mutation_probability=0.18,mutation_by_replacement=True,keep_elitism=4,fitness_batch_size=pop_size,random_seed=seed,)
 
-        # Vectorized tournament selection (k=3) for remaining (pop_size - 4) offspring
-        n_offspring = pop_size - 4
-        t1 = rng.integers(0, pop_size, size=(n_offspring, 3))
-        t2 = rng.integers(0, pop_size, size=(n_offspring, 3))
-        p1 = pop[t1[np.arange(n_offspring), np.argmax(fitness[t1], axis=1)]]
-        p2 = pop[t2[np.arange(n_offspring), np.argmax(fitness[t2], axis=1)]]
+    # 4. Run the genetic algorithm
+    ga_instance.run()
 
-        # One-point crossover across all offspring simultaneously
-        cut = rng.integers(1, N_SEASONS, size=(n_offspring, 1))
-        gene_pos = np.arange(N_SEASONS)[None, :]
-        children = np.where(gene_pos < cut, p1, p2)
+    # 5. Retrieve the final population and fitness values
+    final_population = np.asarray(ga_instance.population,dtype=np.int32,)
+    final_fitness = np.asarray(ga_instance.last_generation_fitness,dtype=float,)
 
-        # Per-gene mutation (18% rate)
-        mut_mask = rng.random((n_offspring, N_SEASONS)) < 0.18
-        random_genes = rng.integers(0, n_crops, size=(n_offspring, N_SEASONS), dtype=np.int32)
-        children = np.where(mut_mask, random_genes, children)
-
-        pop = np.vstack([elites, children])
-
-    # Final evaluation & pick best distinct sequence
-    f_soil, f_water, f_cost = evaluate_population_vectorized(pop, layer1, store)
-    fitness = w_soil * f_soil + w_water * f_water + w_cost * f_cost
-    if require_legume_or_cover:
-        has_fixer = np.any((cat[pop] == 1) | (cat[pop] == 2), axis=1)
-        fitness = np.where(has_fixer, fitness, fitness - 0.45)
-
-    for idx in np.argsort(-fitness):
-        seq = (int(pop[idx, 0]), int(pop[idx, 1]), int(pop[idx, 2]))
+    # 6. Select the best sequence not already used
+    for idx in np.argsort(-final_fitness):
+        seq = (int(final_population[idx, 0]),int(final_population[idx, 1]),int(final_population[idx, 2]),)
         if seq not in forbid_sequences:
-            return seq, float(fitness[idx])
+            return seq, float(final_fitness[idx])
 
-    top = int(np.argmax(fitness))
-    return (int(pop[top, 0]), int(pop[top, 1]), int(pop[top, 2])), float(fitness[top])
+    # 7. Preserve the original fallback behavior
+    top = int(np.argmax(final_fitness))
+
+    return ((int(final_population[top, 0]),int(final_population[top, 1]),int(final_population[top, 2]),),
+                float(final_fitness[top]),)
 
 
 def _build_strategy_payload(
