@@ -8,7 +8,7 @@ import FarmMapLazy from "@/components/map/FarmMapLazy";
 import CropIcon from "@/components/ui/CropIcon";
 import { ChoiceCards, Notice, Question, Spinner } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { analyseFarm, createFarm, fetchCrops } from "@/lib/api";
+import { ApiError, analyseFarm, createFarm, fetchCrops, getToken } from "@/lib/api";
 import { clearDraft, useDraft, type FieldDraft } from "@/lib/draft";
 import { checkField, formatLatLon, haToAcres } from "@/lib/geo";
 import { CATEGORY_LABEL, MONTHS_LONG, PLANTING_PRESETS, PRIORITY_OPTIONS, SOIL_OPTIONS, regionFor, shortCrop } from "@/lib/labels";
@@ -47,6 +47,7 @@ export default function FarmWizardPage() {
   const [drawSignal, setDrawSignal] = useState(0);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [authed, setAuthed] = useState(false);
 
   function loadCrops() {
     setCropsError(null);
@@ -54,7 +55,14 @@ export default function FarmWizardPage() {
       .then(setCrops)
       .catch((err: Error) => setCropsError(err.message));
   }
-  useEffect(loadCrops, []);
+  useEffect(() => {
+    if (!getToken()) {
+      router.replace("/login?next=/farm");
+      return;
+    }
+    setAuthed(true);
+    loadCrops();
+  }, [router]);
 
   const step = draft.step;
   const errors = tried[step] ? errorsFor(draft, step) : {};
@@ -94,11 +102,15 @@ export default function FarmWizardPage() {
       router.push(`/results/${analysis.id}`);
     } catch (err) {
       setRunning(false);
+      if (err instanceof ApiError && err.isAuth) {
+        router.replace("/login?next=/farm");
+        return;
+      }
       setRunError((err as Error).message);
     }
   }
 
-  if (!loaded) return <PageLoader label="Loading…" />;
+  if (!loaded || !authed) return <PageLoader label="Loading…" />;
 
   const header = (
     <header className="space-y-3">

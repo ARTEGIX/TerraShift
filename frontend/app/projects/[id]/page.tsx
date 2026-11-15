@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Notice } from "@/components/ui/controls";
 import { PageLoader } from "@/components/ui/Loaders";
-import { deleteProject, fetchCrops, getProject, recalculateProject, updateProject, type ProjectSeasonInput } from "@/lib/api";
+import { ApiError, deleteProject, fetchCrops, getProject, getToken, recalculateProject, updateProject, type ProjectSeasonInput } from "@/lib/api";
 import { prettyId } from "@/lib/labels";
 import { letterOf, type CropInfo, type ProjectDetailResponse } from "@/lib/types";
 
@@ -33,6 +33,10 @@ export default function ProjectWorkspacePage() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.replace(`/login?next=/projects/${encodeURIComponent(id)}`);
+      return;
+    }
     fetchCrops().then(setCrops).catch(() => setCrops([]));
     setLoading(true);
     setError(null);
@@ -48,9 +52,15 @@ export default function ProjectWorkspacePage() {
           })),
         );
       })
-      .catch((err) => setError((err as Error).message))
+      .catch((err) => {
+        if (err instanceof ApiError && err.isAuth) {
+          router.replace(`/login?next=/projects/${encodeURIComponent(id)}`);
+        } else {
+          setError((err as Error).message);
+        }
+      })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, router]);
 
   function toSeasonInputs(): ProjectSeasonInput[] {
     return drafts.map((d) => ({

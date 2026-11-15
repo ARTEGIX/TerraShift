@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { mongoReady } from "../db/mongo";
+import { requireAuth } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import { Project, type IProject, type IProjectSeason } from "../models/Project";
 import { projectRecalculate } from "../services/agronomyClient";
@@ -19,6 +20,7 @@ import {
 } from "./schemas";
 
 const router = Router();
+router.use(requireAuth);
 
 const memoryProjects = new Map<string, IProject>();
 
@@ -32,6 +34,16 @@ export function deleteProjectsByReportIdFromMemory(reportId: string): void {
   for (const [id, p] of memoryProjects.entries()) {
     if (p.report_id === reportId) memoryProjects.delete(id);
   }
+}
+
+async function findProjectById(id: string, ownerId: string): Promise<IProject | null> {
+  const mem = memoryProjects.get(id);
+  if (mem && mem.owner === ownerId) return mem;
+  if (mongoReady()) {
+    const doc = await Project.findOne({ _id: id, owner: ownerId }).lean<IProject>();
+    if (doc) return doc;
+  }
+  return null;
 }
 
 function toPublicProject(p: IProject) {
@@ -58,10 +70,11 @@ router.post(
   "/",
   validateBody(projectCreateSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as ProjectCreate;
 
-    // Fetch the simulation run
-    const run = await findRunById(body.report_id);
+    // Fetch the simulation run owned by the authenticated farmer
+    const run = await findRunById(body.report_id, ownerId);
     if (!run) throw HttpError.notFound(`Report '${body.report_id}' not found`);
 
     // Find the selected strategy in the prediction
@@ -88,6 +101,7 @@ router.post(
     const now = new Date();
     const projectDoc: IProject = {
       _id: projectId,
+      owner: ownerId,
       name: body.name,
       farm_id: run.farm_id ?? "",
       report_id: body.report_id,
@@ -115,11 +129,12 @@ router.post(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const farmId = typeof req.query.farm_id === "string" ? req.query.farm_id : undefined;
     const reportId = typeof req.query.report_id === "string" ? req.query.report_id : undefined;
 
     if (mongoReady()) {
-      const filter: Record<string, string> = {};
+      const filter: Record<string, string> = { owner: ownerId };
       if (farmId) filter.farm_id = farmId;
       if (reportId) filter.report_id = reportId;
       const projects = await Project.find(filter).sort({ created_at: -1 }).lean<IProject[]>();
@@ -128,6 +143,7 @@ router.get(
     }
 
     const list = Array.from(memoryProjects.values()).filter((p) => {
+      if (p.owner !== ownerId) return false;
       if (farmId && p.farm_id !== farmId) return false;
       if (reportId && p.report_id !== reportId) return false;
       return true;
@@ -140,21 +156,14 @@ router.get(
 router.get(
   "/:id",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const id = req.params.id;
 
-    let projectDoc: IProject | undefined;
-    const mem = memoryProjects.get(id);
-    if (mem) {
-      projectDoc = mem;
-    } else if (mongoReady()) {
-      const doc = await Project.findById(id).lean<IProject>();
-      if (doc) projectDoc = doc;
-    }
-
+    const projectDoc = await findProjectById(id, ownerId);
     if (!projectDoc) throw HttpError.notFound(`Project '${id}' not found`);
 
-    const farm = await findFarmById(projectDoc.farm_id);
-    const report = await findRunById(projectDoc.report_id);
+    const farm = await findFarmById(projectDoc.farm_id, ownerId);
+    const report = await findRunById(projectDoc.report_id, ownerId);
 
     res.json({
       project: toPublicProject(projectDoc),
@@ -191,26 +200,21 @@ router.patch(
   "/:id",
   validateBody(projectPatchSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as ProjectPatch;
     const id = req.params.id;
 
-    let existing: IProject | undefined;
-    const mem = memoryProjects.get(id);
-    if (mem) {
-      existing = mem;
-    } else if (mongoReady()) {
-      const doc = await Project.findById(id).lean<IProject>();
-      if (doc) existing = doc;
-    }
+    const existing = await findProjectById(id, ownerId);
     if (!existing) throw HttpError.notFound(`Project '${id}' not found`);
 
     const now = new Date();
     const updated: IProject = {
       ...existing,
+      owner: ownerId,
       ...(body.name !== undefined && { name: body.name }),
       ...(body.seasons !== undefined && {
         seasons: body.seasons.map((s: SeasonInput, i: number) => {
-          const prev = existing!.seasons[i];
+          const prev = existing.seasons[i];
           const targetWater = s.target_water_mm !== undefined
             ? (s.target_water_mm === null ? undefined : s.target_water_mm)
             : prev?.target_water_mm;
@@ -230,7 +234,7 @@ router.patch(
 
     memoryProjects.set(id, updated);
     if (mongoReady()) {
-      await Project.findByIdAndUpdate(id, updated, { new: true });
+      await Project.findOneAndUpdate({ _id: id, owner: ownerId }, updated, { new: true });
     }
 
     res.json({ project: toPublicProject(updated) });
@@ -242,22 +246,16 @@ router.post(
   "/:id/recalculate",
   validateBody(projectRecalcSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as ProjectRecalc;
     const id = req.params.id;
 
-    // Find the project
-    let existing: IProject | undefined;
-    const mem = memoryProjects.get(id);
-    if (mem) {
-      existing = mem;
-    } else if (mongoReady()) {
-      const doc = await Project.findById(id).lean<IProject>();
-      if (doc) existing = doc;
-    }
+    // Find the project owned by the farmer
+    const existing = await findProjectById(id, ownerId);
     if (!existing) throw HttpError.notFound(`Project '${id}' not found`);
 
     // Fetch the farm for field baseline
-    const farm = await findFarmById(existing.farm_id);
+    const farm = await findFarmById(existing.farm_id, ownerId);
     if (!farm) throw HttpError.notFound(`Farm '${existing.farm_id}' not found`);
 
     // Assemble engine request
@@ -270,7 +268,7 @@ router.post(
       planting_month: farm.planting_month ?? 10,
       area_ha: farm.area_ha,
       seasons: body.seasons.map((s: SeasonInput, i: number) => {
-        const prev = existing!.seasons[i];
+        const prev = existing.seasons[i];
         const targetWater = s.target_water_mm !== undefined
           ? (s.target_water_mm === null ? undefined : s.target_water_mm)
           : prev?.target_water_mm;
@@ -289,7 +287,7 @@ router.post(
 
     // Merge updated metrics back into project seasons
     const updatedSeasons: IProjectSeason[] = body.seasons.map((s: SeasonInput, i: number) => {
-      const prev = existing!.seasons[i];
+      const prev = existing.seasons[i];
       const targetWater = s.target_water_mm !== undefined
         ? (s.target_water_mm === null ? undefined : s.target_water_mm)
         : prev?.target_water_mm;
@@ -311,6 +309,7 @@ router.post(
     const now = new Date();
     const updated: IProject = {
       ...existing,
+      owner: ownerId,
       seasons: updatedSeasons,
       totals: result.totals,
       objectives: result.objectives,
@@ -321,7 +320,7 @@ router.post(
 
     memoryProjects.set(id, updated);
     if (mongoReady()) {
-      await Project.findByIdAndUpdate(id, updated, { new: true });
+      await Project.findOneAndUpdate({ _id: id, owner: ownerId }, updated, { new: true });
     }
 
     res.json({ project: toPublicProject(updated) });
@@ -332,14 +331,14 @@ router.post(
 router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const id = req.params.id;
-    const existedMem = memoryProjects.delete(id);
-    let deletedDb = 0;
+    const existing = await findProjectById(id, ownerId);
+    if (!existing) throw HttpError.notFound("Project not found");
+    memoryProjects.delete(id);
     if (mongoReady()) {
-      const result = await Project.deleteOne({ _id: id });
-      deletedDb = result.deletedCount ?? 0;
+      await Project.deleteOne({ _id: id, owner: ownerId });
     }
-    if (!existedMem && deletedDb === 0) throw HttpError.notFound("Project not found");
     res.status(204).end();
   }),
 );

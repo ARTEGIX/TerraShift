@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { mongoReady } from "../db/mongo";
+import { requireAuth } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import { Farm, type IFarm } from "../models/Farm";
 import { Project } from "../models/Project";
@@ -14,55 +15,37 @@ import { deleteProjectsByFarmIdFromMemory } from "./projects";
 import { farmInputSchema, farmPatchSchema, type FarmInput, type FarmPatch } from "./schemas";
 
 const router = Router();
+router.use(requireAuth);
 
-export const DEMO_FARM_FALLBACK: IFarm = {
-  _id: "farm_demo_01",
-  name: "Mahaweli Block-4 Demo Paddy Field",
-  region_id: "region_lk_dryzone",
-  soil_type: "soil_clay_loam",
-  current_crop: "paddy_rice",
-  planting_month: 10,
-  default_priority: "water",
-  area_ha: 2.45,
-  centroid: { lat: 8.3114, lon: 80.4037 },
-  polygon: {
-    type: "Polygon",
-    coordinates: [
-      [
-        [80.3987, 8.3064],
-        [80.4087, 8.3064],
-        [80.4087, 8.3164],
-        [80.3987, 8.3164],
-        [80.3987, 8.3064],
-      ],
-    ],
-  },
-};
+const memoryFarms = new Map<string, IFarm>();
 
-const memoryFarms = new Map<string, IFarm>([[DEMO_FARM_FALLBACK._id, DEMO_FARM_FALLBACK]]);
-
-export async function findFarmById(id: string): Promise<IFarm | null> {
+export async function findFarmById(id: string, ownerId?: string): Promise<IFarm | null> {
   if (mongoReady()) {
-    const doc = await Farm.findById(id).lean<IFarm>();
+    const query: Record<string, unknown> = { _id: id };
+    if (ownerId) query.owner = ownerId;
+    const doc = await Farm.findOne(query).lean<IFarm>();
     if (doc) return doc;
   }
-  return memoryFarms.get(id) ?? null;
+  const mem = memoryFarms.get(id);
+  if (mem && (!ownerId || mem.owner === ownerId)) return mem;
+  return null;
 }
 
-/** GET /api/farms — list farms with reports_count and projects_count */
+/** GET /api/farms — list authenticated farmer's farms with reports_count and projects_count */
 router.get(
   "/",
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     if (mongoReady()) {
-      const farms = await Farm.find({}).sort({ updated_at: -1 }).lean<IFarm[]>();
+      const farms = await Farm.find({ owner: ownerId }).sort({ updated_at: -1 }).lean<IFarm[]>();
       const farmIds = farms.map((f: IFarm) => f._id);
       const [runCounts, projectCounts] = await Promise.all([
         SimulationRun.aggregate([
-          { $match: { farm_id: { $in: farmIds } } },
+          { $match: { farm_id: { $in: farmIds }, owner: ownerId } },
           { $group: { _id: "$farm_id", count: { $sum: 1 } } },
         ]),
         Project.aggregate([
-          { $match: { farm_id: { $in: farmIds } } },
+          { $match: { farm_id: { $in: farmIds }, owner: ownerId } },
           { $group: { _id: "$farm_id", count: { $sum: 1 } } },
         ]),
       ]);
@@ -73,10 +56,13 @@ router.get(
         reports_count: runCountMap[f._id] ?? 0,
         projects_count: projectCountMap[f._id] ?? 0,
       }));
-      res.json({ farms: farmsWithCounts.length ? farmsWithCounts : Array.from(memoryFarms.values()).map((f: IFarm) => ({ ...f, reports_count: 0, projects_count: 0 })) });
+      res.json({ farms: farmsWithCounts });
       return;
     }
-    res.json({ farms: Array.from(memoryFarms.values()).map((f: IFarm) => ({ ...f, reports_count: 0, projects_count: 0 })) });
+    const owned = Array.from(memoryFarms.values())
+      .filter((f: IFarm) => f.owner === ownerId)
+      .map((f: IFarm) => ({ ...f, reports_count: 0, projects_count: 0 }));
+    res.json({ farms: owned });
   }),
 );
 
@@ -85,10 +71,21 @@ router.post(
   "/",
   validateBody(farmInputSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as FarmInput;
     const polygon = body.polygon as Polygon;
+    const farmId = body._id ?? `farm_${randomUUID().slice(0, 8)}`;
+
+    if (body._id) {
+      const existing = await findFarmById(body._id);
+      if (existing && existing.owner && existing.owner !== ownerId) {
+        throw HttpError.forbidden("You do not own this farm");
+      }
+    }
+
     const farmDoc: IFarm = {
-      _id: body._id ?? `farm_${randomUUID().slice(0, 8)}`,
+      _id: farmId,
+      owner: ownerId,
       name: body.name,
       region_id: body.region_id ?? "region_lk_dryzone",
       soil_type: body.soil_type,
@@ -102,7 +99,11 @@ router.post(
 
     memoryFarms.set(farmDoc._id, farmDoc);
     if (mongoReady()) {
-      await Farm.findByIdAndUpdate(farmDoc._id, farmDoc, { upsert: true, new: true });
+      await Farm.findOneAndUpdate(
+        { _id: farmDoc._id, owner: ownerId },
+        farmDoc,
+        { upsert: true, new: true },
+      );
     }
     res.status(201).json({ farm: farmDoc });
   }),
@@ -112,23 +113,24 @@ router.post(
 router.get(
   "/:id",
   asyncHandler(async (req, res) => {
-    const farm = await findFarmById(req.params.id);
+    const ownerId = req.user!.id;
+    const farm = await findFarmById(req.params.id, ownerId);
     if (!farm) throw HttpError.notFound(`Farm '${req.params.id}' not found`);
 
     if (mongoReady()) {
       const [reports, totalReportsCount, totalProjectsCount] = await Promise.all([
-        SimulationRun.find({ farm_id: farm._id })
+        SimulationRun.find({ farm_id: farm._id, owner: ownerId })
           .select("_id recommended_strategy climate_source created_at request.current_crop")
           .sort({ created_at: -1 })
           .limit(50)
           .lean(),
-        SimulationRun.countDocuments({ farm_id: farm._id }),
-        Project.countDocuments({ farm_id: farm._id }),
+        SimulationRun.countDocuments({ farm_id: farm._id, owner: ownerId }),
+        Project.countDocuments({ farm_id: farm._id, owner: ownerId }),
       ]);
 
       const reportIds = reports.map((r: any) => String(r._id));
       const projectCounts = await Project.aggregate([
-        { $match: { report_id: { $in: reportIds } } },
+        { $match: { report_id: { $in: reportIds }, owner: ownerId } },
         { $group: { _id: "$report_id", count: { $sum: 1 } } },
       ]);
       const projectCountMap = Object.fromEntries(projectCounts.map((r: any) => [r._id, r.count]));
@@ -163,8 +165,9 @@ router.patch(
   "/:id",
   validateBody(farmPatchSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as FarmPatch;
-    const existing = await findFarmById(req.params.id);
+    const existing = await findFarmById(req.params.id, ownerId);
     if (!existing) throw HttpError.notFound(`Farm '${req.params.id}' not found`);
 
     // Recalculate area_ha and centroid if polygon changed
@@ -177,6 +180,7 @@ router.patch(
 
     const updated: IFarm = {
       ...existing,
+      owner: ownerId,
       ...(body.name !== undefined && { name: body.name }),
       ...(body.region_id !== undefined && { region_id: body.region_id }),
       ...(body.soil_type !== undefined && { soil_type: body.soil_type }),
@@ -190,9 +194,9 @@ router.patch(
 
     // Cascade delete all simulation_runs and projects for this farm
     if (mongoReady()) {
-      await SimulationRun.deleteMany({ farm_id: req.params.id });
-      await Project.deleteMany({ farm_id: req.params.id });
-      await Farm.findByIdAndUpdate(req.params.id, updated, { new: true });
+      await SimulationRun.deleteMany({ farm_id: req.params.id, owner: ownerId });
+      await Project.deleteMany({ farm_id: req.params.id, owner: ownerId });
+      await Farm.findOneAndUpdate({ _id: req.params.id, owner: ownerId }, updated, { new: true });
     }
     deleteRunsByFarmIdFromMemory(req.params.id);
     deleteProjectsByFarmIdFromMemory(req.params.id);
@@ -206,15 +210,16 @@ router.patch(
 router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    const existing = await findFarmById(req.params.id);
+    const ownerId = req.user!.id;
+    const existing = await findFarmById(req.params.id, ownerId);
     if (!existing) throw HttpError.notFound("Farm not found");
     memoryFarms.delete(req.params.id);
     deleteRunsByFarmIdFromMemory(req.params.id);
     deleteProjectsByFarmIdFromMemory(req.params.id);
     if (mongoReady()) {
-      await SimulationRun.deleteMany({ farm_id: req.params.id });
-      await Project.deleteMany({ farm_id: req.params.id });
-      await Farm.deleteOne({ _id: req.params.id });
+      await SimulationRun.deleteMany({ farm_id: req.params.id, owner: ownerId });
+      await Project.deleteMany({ farm_id: req.params.id, owner: ownerId });
+      await Farm.deleteOne({ _id: req.params.id, owner: ownerId });
     }
     res.status(204).end();
   }),

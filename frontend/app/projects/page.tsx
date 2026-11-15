@@ -2,25 +2,34 @@
 
 import { ArrowRight, FolderKanban, Plus, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Notice } from "@/components/ui/controls";
 import { PageLoader } from "@/components/ui/Loaders";
-import { deleteProject, listProjects } from "@/lib/api";
+import { ApiError, deleteProject, getToken, listProjects } from "@/lib/api";
 import { letterOf, type Project } from "@/lib/types";
 
 const dateFmt = (d?: string) =>
   d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 
 export default function ProjectsPage() {
+  const router = useRouter();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.replace("/login?next=/projects");
+      return;
+    }
     listProjects()
       .then(setProjects)
-      .catch((err) => setError((err as Error).message));
-  }, []);
+      .catch((err) => {
+        if (err instanceof ApiError && err.isAuth) router.replace("/login?next=/projects");
+        else setError((err as Error).message);
+      });
+  }, [router]);
 
   async function handleDelete(project: Project) {
     if (!confirm(`Delete project "${project.name}"?`)) return;

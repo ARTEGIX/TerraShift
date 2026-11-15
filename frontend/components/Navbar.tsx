@@ -31,7 +31,7 @@ export default function Navbar() {
 
   async function signOut() {
     await logout();
-    router.push("/");
+    router.push("/login");
   }
 
   return (

@@ -300,8 +300,8 @@ def seed_atlas(atlas_uri: str | None = None) -> dict[str, int]:
         [ReplaceOne({"_id": doc["_id"]}, doc, upsert=True) for doc in REGIONAL_SATURATION_SEED]
     )
 
-    general_db["farms"].replace_one({"_id": DEMO_FARM_SEED["_id"]}, DEMO_FARM_SEED, upsert=True)
     general_db["farms"].create_index([("polygon", GEOSPHERE)], name="idx_farms_polygon_2dsphere")
+    general_db["farms"].create_index([("owner", ASCENDING)], name="idx_farms_owner")
     general_db["simulation_runs"].create_index(
         [("farm_id", ASCENDING), ("created_at", DESCENDING)],
         name="idx_simulation_runs_farm_id",

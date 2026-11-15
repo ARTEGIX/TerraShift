@@ -11,7 +11,7 @@ import PlanCharts from "@/components/strategy/PlanCharts";
 import StrategyCard, { CropSequence, PLAN_COLOR, PLAN_SHORT, SignalList, signalsFor } from "@/components/strategy/StrategyCard";
 import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { PageLoader } from "@/components/ui/Loaders";
-import { ApiError, createProject, deleteAnalysis, fetchAnalysis, fetchCrops } from "@/lib/api";
+import { ApiError, createProject, deleteAnalysis, fetchAnalysis, fetchCrops, getToken } from "@/lib/api";
 import { MONTHS_LONG, cleanText, prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisRecord, type CropInfo, type Priority, type SoilType, type StrategyId } from "@/lib/types";
 
@@ -41,6 +41,10 @@ export default function ResultsPage() {
   const [deletingReport, setDeletingReport] = useState(false);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.replace(`/login?next=/results/${encodeURIComponent(id)}`);
+      return;
+    }
     setRecord(null);
     setError(null);
     fetchCrops().then(setCrops).catch(() => setCrops([]));

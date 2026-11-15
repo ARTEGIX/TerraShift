@@ -1,5 +1,9 @@
-import "dotenv/config";
+import path from "node:path";
+import dotenv from "dotenv";
 import { z } from "zod";
+
+dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -34,7 +38,7 @@ export function resolveGeneralMongoUri(): string {
     env.MONGO_URI,
   ];
   for (const c of candidates) {
-    if (c && !c.includes("<username>") && !c.startsWith("/")) {
+    if (c && !c.includes("<username>") && !c.includes("${") && !c.startsWith("/")) {
       return c;
     }
   }

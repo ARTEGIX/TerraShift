@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { mongoReady } from "../db/mongo";
+import { requireAuth } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import { Project } from "../models/Project";
 import { SimulationRun, type ISimulationRun } from "../models/SimulationRun";
@@ -15,6 +16,7 @@ import { deleteProjectsByReportIdFromMemory } from "./projects";
 import { analyzeInputSchema, type AnalyzeInput } from "./schemas";
 
 const router = Router();
+router.use(requireAuth);
 
 interface StoredSimulation extends ISimulationRun {
   id: string;
@@ -28,12 +30,14 @@ export function deleteRunsByFarmIdFromMemory(farmId: string): void {
   }
 }
 
-export async function findRunById(id: string): Promise<StoredSimulation | null> {
+export async function findRunById(id: string, ownerId?: string): Promise<StoredSimulation | null> {
   const mem = memoryRuns.get(id);
-  if (mem) return mem;
+  if (mem && (!ownerId || mem.owner === ownerId)) return mem;
   if (mongoReady()) {
     try {
-      const doc = await SimulationRun.findById(id).lean<ISimulationRun>();
+      const query: Record<string, unknown> = { _id: id };
+      if (ownerId) query.owner = ownerId;
+      const doc = await SimulationRun.findOne(query).lean<ISimulationRun>();
       if (doc) return { ...doc, id: String((doc as any)._id) } as StoredSimulation;
     } catch {
       return null;
@@ -54,12 +58,13 @@ router.post(
   "/",
   validateBody(analyzeInputSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const body = req.body as AnalyzeInput;
     let engineReq: PredictRequest;
     let farmId: string | undefined;
 
     if (!("polygon" in body)) {
-      const farm = await findFarmById(body.farm_id);
+      const farm = await findFarmById(body.farm_id, ownerId);
       if (!farm) throw HttpError.notFound(`Farm '${body.farm_id}' not found`);
       farmId = farm._id;
       engineReq = {
@@ -74,7 +79,11 @@ router.post(
       };
     } else {
       const polygon = body.polygon as Polygon;
-      farmId = body.farm_id;
+      if (body.farm_id) {
+        const farm = await findFarmById(body.farm_id, ownerId);
+        if (!farm) throw HttpError.notFound(`Farm '${body.farm_id}' not found`);
+        farmId = farm._id;
+      }
       engineReq = {
         polygon,
         centroid: body.centroid ?? polygonCentroid(polygon),
@@ -96,6 +105,7 @@ router.post(
     if (mongoReady()) {
       const doc = await SimulationRun.create({
         farm_id: farmId,
+        owner: ownerId,
         request: engineReq,
         prediction,
         explanation,
@@ -108,6 +118,7 @@ router.post(
       memoryRuns.set(runId, {
         id: runId,
         farm_id: farmId,
+        owner: ownerId,
         request: engineReq,
         prediction,
         explanation,
@@ -132,9 +143,11 @@ router.post(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const farmId = typeof req.query.farm_id === "string" ? req.query.farm_id : undefined;
     if (mongoReady()) {
-      const filter = farmId ? { farm_id: farmId } : {};
+      const filter: Record<string, unknown> = { owner: ownerId };
+      if (farmId) filter.farm_id = farmId;
       const runs = await SimulationRun.find(filter)
         .select("farm_id recommended_strategy climate_source created_at request.current_crop request.priority")
         .sort({ created_at: -1 })
@@ -143,7 +156,7 @@ router.get(
       res.json({ simulation_runs: runs, analyses: runs });
       return;
     }
-    const list = Array.from(memoryRuns.values()).filter((r) => !farmId || r.farm_id === farmId);
+    const list = Array.from(memoryRuns.values()).filter((r) => r.owner === ownerId && (!farmId || r.farm_id === farmId));
     res.json({ simulation_runs: list, analyses: list });
   }),
 );
@@ -152,32 +165,17 @@ router.get(
 router.get(
   "/:id",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const id = req.params.id;
-    const mem = memoryRuns.get(id);
-    if (mem) {
-      res.json({
-        id: mem.id,
-        farm_id: mem.farm_id,
-        prediction: mem.prediction,
-        explanation: mem.explanation,
-        createdAt: mem.created_at,
-      });
-      return;
-    }
-    if (mongoReady()) {
-      const doc = await SimulationRun.findById(id).lean();
-      if (doc) {
-        res.json({
-          id: String(doc._id),
-          farm_id: doc.farm_id,
-          prediction: doc.prediction,
-          explanation: doc.explanation,
-          createdAt: doc.created_at,
-        });
-        return;
-      }
-    }
-    throw HttpError.notFound(`Simulation run '${id}' not found`);
+    const run = await findRunById(id, ownerId);
+    if (!run) throw HttpError.notFound(`Simulation run '${id}' not found`);
+    res.json({
+      id: run.id,
+      farm_id: run.farm_id,
+      prediction: run.prediction,
+      explanation: run.explanation,
+      createdAt: run.created_at,
+    });
   }),
 );
 
@@ -185,14 +183,15 @@ router.get(
 router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
     const id = req.params.id;
-    const existing = await findRunById(id);
+    const existing = await findRunById(id, ownerId);
     if (!existing) throw HttpError.notFound("Simulation run not found");
     memoryRuns.delete(id);
     deleteProjectsByReportIdFromMemory(id);
     if (mongoReady()) {
-      await Project.deleteMany({ report_id: id });
-      await SimulationRun.deleteOne({ _id: id });
+      await Project.deleteMany({ report_id: id, owner: ownerId });
+      await SimulationRun.deleteOne({ _id: id, owner: ownerId });
     }
     res.status(204).end();
   }),

@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import CascadeWarningModal from "@/components/ui/CascadeWarningModal";
 import { Notice } from "@/components/ui/controls";
 import { AnalysisLoader, PageLoader } from "@/components/ui/Loaders";
-import { ApiError, analyseFarm, deleteFarm, fetchCrops, listAnalyses, listFarms } from "@/lib/api";
+import { ApiError, analyseFarm, deleteFarm, fetchCrops, getToken, listAnalyses, listFarms } from "@/lib/api";
 import { haToAcres } from "@/lib/geo";
 import { prettyId, priorityLabel, shortCrop, soilLabel } from "@/lib/labels";
 import { letterOf, type AnalysisSummary, type CropInfo, type Farm } from "@/lib/types";
@@ -25,6 +25,10 @@ export default function FarmsPage() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.replace("/login?next=/farms");
+      return;
+    }
     fetchCrops().then(setCrops).catch(() => setCrops([]));
     Promise.all([listFarms(), listAnalyses()])
       .then(([f, a]) => {
