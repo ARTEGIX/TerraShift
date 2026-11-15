@@ -495,3 +495,108 @@ def test_appeears_l1_redis_and_l2_general_db_fallback_and_write(monkeypatch):
     series = asyncio.run(appeears_client.get_cached_appeears_series(7.87, 80.77))
     assert series == l2_payload
     assert fake_redis[cache_key] == l2_payload
+
+
+def test_appeears_sync_completed_tasks(monkeypatch):
+    import asyncio
+
+    from app import appeears_client, appeears_store, cache
+
+    fake_redis: dict[str, object] = {}
+    fake_l2: dict[tuple[str, int, int], dict[str, object]] = {}
+
+    async def fake_get_json(k):
+        return fake_redis.get(k)
+
+    async def fake_set_json(k, v, ttl_seconds=None):
+        fake_redis[k] = v
+
+    async def fake_del(k):
+        fake_redis.pop(k, None)
+
+    async def fake_l2_get(grid_key, start_year, end_year):
+        return fake_l2.get((grid_key, start_year, end_year))
+
+    async def fake_l2_save(grid_key, lat, lon, start_year, end_year, data):
+        fake_l2[(grid_key, start_year, end_year)] = data
+        return True
+
+    monkeypatch.setattr(cache, "get_json", fake_get_json)
+    monkeypatch.setattr(cache, "set_json", fake_set_json)
+    monkeypatch.setattr(cache, "delete_key", fake_del)
+    monkeypatch.setattr(appeears_store, "get_appeears_series", fake_l2_get)
+    monkeypatch.setattr(appeears_store, "save_appeears_series", fake_l2_save)
+    monkeypatch.setattr(appeears_client, "_has_credentials", lambda: True)
+    monkeypatch.setattr(appeears_client, "_get_appeears_token", lambda *_a, **_k: asyncio.sleep(0, result="tok"))
+
+    months = [f"{y:04d}-{m:02d}" for y in (2023, 2024, 2025) for m in range(1, 13)]
+    modis_csv = "ID,Latitude,Longitude,Date,MOD13Q1_061__250m_16_days_NDVI\n" + "\n".join(
+        f"id,7.25,79.86,{m}-01,0.61" for m in months
+    )
+    bundle_downloads = 0
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload=None, text: str = ""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **_kwargs):
+            nonlocal bundle_downloads
+            if url.endswith("/task"):
+                return FakeResp(
+                    200,
+                    [
+                        {
+                            "task_id": "old-t",
+                            "task_name": "terrashift_7.25_79.86_2023_2025",
+                            "status": "done",
+                            "created": "2026-11-14T20:00:00",
+                        },
+                        {
+                            "task_id": "new-t",
+                            "task_name": "terrashift_7.25_79.86_2023_2025",
+                            "status": "done",
+                            "created": "2026-11-15T00:09:35",
+                        },
+                        {
+                            "task_id": "pending-t",
+                            "task_name": "terrashift_7.10_79.99_2023_2025",
+                            "status": "pending",
+                            "created": "2026-11-15T11:00:00",
+                        },
+                    ],
+                )
+            if url.endswith("/bundle/new-t"):
+                bundle_downloads += 1
+                return FakeResp(200, {"files": [{"file_id": "f1", "file_name": "terrashift-MOD13Q1-061-results.csv"}]})
+            if url.endswith("/bundle/new-t/f1"):
+                return FakeResp(200, text=modis_csv)
+            return FakeResp(404)
+
+    monkeypatch.setattr(appeears_client.httpx, "AsyncClient", FakeClient)
+
+    synced = asyncio.run(appeears_client.sync_completed_appeears_tasks())
+    assert len(synced) == 1
+    assert synced[0]["task_id"] == "new-t"
+    assert synced[0]["action"] == "imported"
+    assert bundle_downloads == 1
+    assert ("appeears:grid:7.25:79.86", 2023, 2025) in fake_l2
+    assert "appeears:grid:7.25:79.86" in fake_redis

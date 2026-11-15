@@ -17,8 +17,10 @@ import asyncio
 import csv
 import io
 import logging
+import re
 import time
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -76,11 +78,15 @@ def appeears_pending_key(lat: float, lon: float) -> tuple[float, float, str]:
     return rlat, rlon, f"appeears:pending:{rlat:.2f}:{rlon:.2f}"
 
 
+def _months_for_years(start_year: int, end_year: int) -> list[str]:
+    return [f"{yr:04d}-{mo:02d}" for yr in range(start_year, end_year + 1) for mo in range(1, 13)]
+
+
 def target_36_months(today: date | None = None) -> list[str]:
     """Return the 36 `YYYY-MM` labels matching `nasa_fusion._year_window_36m`."""
     end_year = (today or date.today()).year - 1
     start_year = end_year - 2
-    return [f"{yr:04d}-{mo:02d}" for yr in range(start_year, end_year + 1) for mo in range(1, 13)]
+    return _months_for_years(start_year, end_year)
 
 
 def _window_years(months: list[str] | None = None) -> tuple[int, int]:
@@ -235,6 +241,38 @@ async def _auth_headers(client: httpx.AsyncClient, base: str, force_refresh: boo
     return {"Authorization": f"Bearer {token}"}
 
 
+def _csv_product_slot(fname: str) -> str | None:
+    """Identify which AppEEARS product CSV slot a filename corresponds to."""
+    norm = fname.replace("-", "_")
+    if "HLSS30" in norm:
+        return "hls"
+    if "MOD13Q1" in norm:
+        return "modis"
+    if "ECO_L4T_ESI" in norm:
+        return "eco"
+    if "SPL4SMGP" in norm:
+        return "smap"
+    return None
+
+
+async def _persist_aggregated_series(
+    cache_key: str,
+    lat: float,
+    lon: float,
+    months: list[str],
+    aggregated: dict[str, Any],
+) -> None:
+    """Persist aggregated AppEEARS series to L1 Redis and L2 MongoDB general_db."""
+    await cache.set_json(
+        cache_key,
+        aggregated,
+        ttl_seconds=_redis_ttl_seconds(),
+    )
+    start_year, end_year = _window_years(months)
+    await appeears_store.save_appeears_series(cache_key, lat, lon, start_year, end_year, aggregated)
+    log.info("Cached AppEEARS satellite series in Redis + general_db under %s", cache_key)
+
+
 async def _download_and_cache_bundle(
     client: httpx.AsyncClient,
     base: str,
@@ -252,13 +290,13 @@ async def _download_and_cache_bundle(
     bundle_resp.raise_for_status()
     files = bundle_resp.json().get("files", [])
 
-    modis_csv: str | None = None
-    hls_csv: str | None = None
-    eco_csv: str | None = None
-    smap_csv: str | None = None
+    slots: dict[str, str] = {}
     for f in files:
         fname = str(f.get("file_name", ""))
         if not fname.endswith(".csv"):
+            continue
+        slot = _csv_product_slot(fname)
+        if not slot:
             continue
         file_id = f["file_id"]
         t_dl = time.perf_counter()
@@ -270,30 +308,21 @@ async def _download_and_cache_bundle(
             (time.perf_counter() - t_dl) * 1000.0,
         )
         dl.raise_for_status()
-        norm_name = fname.replace("-", "_")
-        if "HLSS30" in norm_name:
-            hls_csv = dl.text
-        elif "MOD13Q1" in norm_name:
-            modis_csv = dl.text
-        elif "ECO_L4T_ESI" in norm_name:
-            eco_csv = dl.text
-        elif "SPL4SMGP" in norm_name:
-            smap_csv = dl.text
+        slots[slot] = dl.text
 
-    aggregated = aggregate_appeears_csvs(modis_csv, smap_csv, months, hls_csv=hls_csv, eco_csv=eco_csv)
+    aggregated = aggregate_appeears_csvs(
+        slots.get("modis"),
+        slots.get("smap"),
+        months,
+        hls_csv=slots.get("hls"),
+        eco_csv=slots.get("eco"),
+    )
     if aggregated is None:
         await cache.delete_key(pending_key)
         return None
 
-    await cache.set_json(
-        cache_key,
-        aggregated,
-        ttl_seconds=_redis_ttl_seconds(),
-    )
-    start_year, end_year = _window_years(months)
-    await appeears_store.save_appeears_series(cache_key, lat, lon, start_year, end_year, aggregated)
+    await _persist_aggregated_series(cache_key, lat, lon, months, aggregated)
     await cache.delete_key(pending_key)
-    log.info("Cached AppEEARS satellite series in Redis under %s", cache_key)
     return aggregated
 
 
@@ -447,3 +476,173 @@ def trigger_background_prefetch(lat: float, lon: float) -> bool:
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return True
+
+
+_TASK_NAME_RE = re.compile(r"^terrashift_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)_(\d{4})_(\d{4})$")
+_CSV_PREFIX_RE = re.compile(r"^(terrashift-(-?\d+)-(\d+)-(-?\d+)-(\d+)-(\d{4})-(\d{4}))-")
+
+
+def _extract_task_grid(task: dict[str, Any]) -> tuple[float, float, int, int] | None:
+    """Extract `(lat, lon, start_year, end_year)` from an AppEEARS task summary."""
+    name = str(task.get("task_name") or "")
+    m = _TASK_NAME_RE.match(name)
+    if m:
+        return round(float(m.group(1)), 2), round(float(m.group(2)), 2), int(m.group(3)), int(m.group(4))
+
+    params = task.get("params") if isinstance(task.get("params"), dict) else {}
+    coords = params.get("coordinates") if isinstance(params.get("coordinates"), list) else []
+    dates = params.get("dates") if isinstance(params.get("dates"), list) else []
+    if coords and dates and isinstance(coords[0], dict) and isinstance(dates[0], dict):
+        try:
+            lat = round(float(coords[0]["latitude"]), 2)
+            lon = round(float(coords[0]["longitude"]), 2)
+            start_year = int(str(dates[0]["startDate"])[-4:])
+            end_year = int(str(dates[0]["endDate"])[-4:])
+            return lat, lon, start_year, end_year
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+async def sync_completed_appeears_tasks() -> list[dict[str, Any]]:
+    """Download all completed TerraShift AppEEARS tasks into Redis L1 + MongoDB L2."""
+    if not _has_credentials():
+        return []
+
+    settings = get_settings()
+    base = settings.appeears_base_url.rstrip("/")
+    results: list[dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        headers = await _auth_headers(client, base)
+        resp = await client.get(f"{base}/task", headers=headers)
+        if resp.status_code in {401, 403} and settings.earthdata_username and settings.earthdata_password:
+            headers = await _auth_headers(client, base, force_refresh=True)
+            resp = await client.get(f"{base}/task", headers=headers)
+        resp.raise_for_status()
+        tasks = resp.json()
+        if not isinstance(tasks, list):
+            return []
+
+        # Deduplicate completed tasks by (rlat, rlon, start_year, end_year), keeping the newest
+        latest_by_cell: dict[tuple[float, float, int, int], dict[str, Any]] = {}
+        for t in tasks:
+            if not isinstance(t, dict) or t.get("status") != "done":
+                continue
+            grid = _extract_task_grid(t)
+            if grid is None:
+                continue
+            stamp = str(t.get("completed") or t.get("created") or "")
+            prev = latest_by_cell.get(grid)
+            if prev is None or stamp > str(prev.get("completed") or prev.get("created") or ""):
+                latest_by_cell[grid] = t
+
+        for (rlat, rlon, start_year, end_year), task in sorted(latest_by_cell.items()):
+            task_id = str(task["task_id"])
+            _, _, key = appeears_cache_key(rlat, rlon)
+            _, _, pending_key = appeears_pending_key(rlat, rlon)
+            months = _months_for_years(start_year, end_year)
+
+            l1 = await cache.get_json(key)
+            if _is_valid_appeears_payload(l1, months):
+                # Ensure L2 MongoDB also has it
+                if not _is_valid_appeears_payload(await appeears_store.get_appeears_series(key, start_year, end_year), months):
+                    await appeears_store.save_appeears_series(key, rlat, rlon, start_year, end_year, l1)
+                results.append({"grid_key": key, "lat": rlat, "lon": rlon, "start_year": start_year, "end_year": end_year, "task_id": task_id, "action": "already_cached"})
+                continue
+
+            l2 = await appeears_store.get_appeears_series(key, start_year, end_year)
+            if _is_valid_appeears_payload(l2, months):
+                await cache.set_json(key, l2, ttl_seconds=_redis_ttl_seconds())
+                results.append({"grid_key": key, "lat": rlat, "lon": rlon, "start_year": start_year, "end_year": end_year, "task_id": task_id, "action": "already_cached"})
+                continue
+
+            agg = await _download_and_cache_bundle(client, base, headers, task_id, rlat, rlon, key, pending_key, months)
+            results.append({
+                "grid_key": key,
+                "lat": rlat,
+                "lon": rlon,
+                "start_year": start_year,
+                "end_year": end_year,
+                "task_id": task_id,
+                "action": "imported" if agg is not None else "empty",
+            })
+
+    return results
+
+
+def _infer_coords_from_csv(csv_text: str) -> tuple[float, float] | None:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        try:
+            lat = float(row.get("Latitude") or row.get("latitude") or "")
+            lon = float(row.get("Longitude") or row.get("longitude") or "")
+            return round(lat, 2), round(lon, 2)
+        except ValueError:
+            continue
+    return None
+
+
+async def import_appeears_csv_dir(
+    directory: str,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> list[dict[str, Any]]:
+    """Import locally downloaded AppEEARS `*-results.csv` files into Redis L1 + MongoDB L2."""
+    root = Path(directory)
+    if not root.exists():
+        raise FileNotFoundError(f"Directory not found: {directory}")
+
+    csv_files = sorted(root.rglob("*-results.csv")) or sorted(root.rglob("*.csv"))
+    groups: dict[str, dict[str, Any]] = {}
+
+    for path in csv_files:
+        slot = _csv_product_slot(path.name)
+        if not slot:
+            continue
+        m = _CSV_PREFIX_RE.match(path.name)
+        if m and lat is None and lon is None:
+            group_key = m.group(1)
+            g_lat = round(float(f"{m.group(2)}.{m.group(3)}"), 2)
+            g_lon = round(float(f"{m.group(4)}.{m.group(5)}"), 2)
+            start_year, end_year = int(m.group(6)), int(m.group(7))
+        else:
+            group_key = "custom"
+            g_lat, g_lon = lat, lon
+            start_year, end_year = _window_years()
+
+        entry = groups.setdefault(group_key, {"lat": g_lat, "lon": g_lon, "start_year": start_year, "end_year": end_year, "slots": {}})
+        entry["slots"][slot] = path.read_text(encoding="utf-8", errors="replace")
+
+    results: list[dict[str, Any]] = []
+    for entry in groups.values():
+        slots: dict[str, str] = entry["slots"]
+        g_lat, g_lon = entry["lat"], entry["lon"]
+        if g_lat is None or g_lon is None:
+            for txt in slots.values():
+                inferred = _infer_coords_from_csv(txt)
+                if inferred:
+                    g_lat, g_lon = inferred
+                    break
+        if g_lat is None or g_lon is None:
+            continue
+
+        rlat, rlon, key = appeears_cache_key(g_lat, g_lon)
+        months = _months_for_years(entry["start_year"], entry["end_year"])
+        agg = aggregate_appeears_csvs(
+            slots.get("modis"),
+            slots.get("smap"),
+            months,
+            hls_csv=slots.get("hls"),
+            eco_csv=slots.get("eco"),
+        )
+        if agg is None:
+            results.append({"grid_key": key, "lat": rlat, "lon": rlon, "action": "empty"})
+            continue
+
+        await _persist_aggregated_series(key, rlat, rlon, months, agg)
+        _, _, pending_key = appeears_pending_key(rlat, rlon)
+        await cache.delete_key(pending_key)
+        results.append({"grid_key": key, "lat": rlat, "lon": rlon, "start_year": entry["start_year"], "end_year": entry["end_year"], "action": "imported"})
+
+    return results

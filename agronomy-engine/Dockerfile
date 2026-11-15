@@ -10,6 +10,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
+COPY scripts ./scripts
 COPY seed_atlas.py ./seed_atlas.py
 
 RUN useradd --create-home appuser
