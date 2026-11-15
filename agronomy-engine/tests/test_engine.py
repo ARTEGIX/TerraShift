@@ -437,6 +437,9 @@ def test_appeears_pending_task_resumption_and_finalization(monkeypatch):
     assert res["ndvi"][0] == 0.55
     assert res["ecostress_esi"][0] == 0.72
 
+    # Stale 2022-2024 cached series must not satisfy current target_36_months()
+    assert asyncio.run(appeears_client.get_cached_appeears_series(8.31, 80.40)) is None
+
 
 def test_appeears_l1_redis_and_l2_general_db_fallback_and_write(monkeypatch):
     import asyncio

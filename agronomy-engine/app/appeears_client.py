@@ -88,8 +88,11 @@ def _window_years(months: list[str] | None = None) -> tuple[int, int]:
     return int(seq[0][:4]), int(seq[-1][:4])
 
 
-def _is_valid_appeears_payload(payload: Any) -> bool:
-    return isinstance(payload, dict) and ("smap_moisture_pct" in payload or "ndvi" in payload)
+def _is_valid_appeears_payload(payload: Any, expected_months: list[str] | None = None) -> bool:
+    if not isinstance(payload, dict) or ("smap_moisture_pct" not in payload and "ndvi" not in payload):
+        return False
+    target = expected_months if expected_months is not None else target_36_months()
+    return payload.get("months") == target
 
 
 def _redis_ttl_seconds() -> int:
